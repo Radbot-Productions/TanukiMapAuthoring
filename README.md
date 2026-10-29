@@ -15,7 +15,7 @@ this is not yet an OpenUPM release.
 Open **Window > Package Manager**, choose **Add package from Git URL**, and paste:
 
 ```text
-https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.4
+https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.5
 ```
 
 Git must be installed and available to Unity. The declared minimum is Unity

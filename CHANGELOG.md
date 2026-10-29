@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.0-preview.5
+
+- Start Workshop helper jobs in the neutral entry world for both source and packaged game executables, keeping rendered splash/lobby UI out of the graphics-free uploader.
+
 ## 0.1.0-preview.4
 
 - Added Export & Upload to Workshop and Export & Update Workshop Item to the authoring window.

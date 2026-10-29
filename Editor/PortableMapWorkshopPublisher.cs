@@ -97,7 +97,8 @@ namespace Radbot.MapAuthoring.Editor
                 ValidateConfiguration(GameExecutable,UnrealProject,title,preview,itemId);
                 string directory=Path.GetFullPath(Path.Combine(Application.dataPath,"../Library/TanukiWorkshop",Guid.NewGuid().ToString("N")));
                 var request=PrepareUpload(map,directory,title,preview,itemId);
-                string args=string.IsNullOrWhiteSpace(UnrealProject) ? "" : Quote(Path.GetFullPath(UnrealProject))+" /Engine/Maps/Entry -game ";
+                string args=string.IsNullOrWhiteSpace(UnrealProject) ? "" : Quote(Path.GetFullPath(UnrealProject))+" ";
+                args+="/Engine/Maps/Entry -game "; // A headless job must not construct the game's rendered splash/lobby UI.
                 args+="-ini:Engine:[OnlineSubsystem]:DefaultPlatformService=Steam -ini:Engine:[OnlineSubsystemSteam]:bEnabled=true ";
                 args+="-nullrhi -LiveCoding=false -nosound -nosplash -PortableMapEditorJob="+Quote(Path.Combine(directory,"request.json"))+" -abslog="+Quote(Path.Combine(directory,"uploader.log"));
                 using(var process=Process.Start(new ProcessStartInfo(Path.GetFullPath(GameExecutable),args) {
