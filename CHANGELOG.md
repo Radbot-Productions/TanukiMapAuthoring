@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-preview.2
+
+- Added a stylized courtyard sample with timber shops, terracotta roofs, shoji windows, faceted trees, an entry gate and courtyard props.
+- Made Open Sample Map open the courtyard. The original room remains available as the basic export regression fixture.
+- Added Unity preview lighting/camera outside the export root and a rendered sample preview helper.
+
 ## 0.1.0-preview.1
 
 - Added the Tanuki Maps editor panel for choosing/creating map roots, placing player starts, adding box collision, validation and export.

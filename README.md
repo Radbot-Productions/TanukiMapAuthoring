@@ -8,12 +8,14 @@ the Unreal runtime prototype. No Unreal Editor is needed for authoring.
 player starts. Workshop publishing and map scripting are not implemented, and
 this is not yet an OpenUPM release.
 
+![Courtyard sample rendered in Unity](Documentation~/courtyard.png)
+
 ## Install with Unity Package Manager
 
 Open **Window > Package Manager**, choose **Add package from Git URL**, and paste:
 
 ```text
-https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.1
+https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.2
 ```
 
 Git must be installed and available to Unity. The declared minimum is Unity
@@ -26,8 +28,10 @@ subset below. For local development, choose **Add package from disk** and select
 
 1. Open **Tanuki > Map Authoring**.
 2. Choose **Open Sample Map**, or **Create Map Root**. The sample generator creates
-   a scene, checker material, texture and PlayerStart prefab in
-   `Assets/TanukiMapSample`. It does not replace an existing sample.
+   a stylized courtyard, materials, meshes, preview lighting/camera and four
+   player starts in `Assets/TanukiCourtyard`. It opens an existing courtyard
+   without replacing it. The original basic room/prefab generator remains at
+   **Tanuki > Create Sample Map** for regression work.
 3. Author geometry under the map root. Keep its world scale at one; its local
    frame is the export origin. Child mesh transforms are baked.
 4. Add Unity colliders to blocking surfaces. Visible geometry does not imply
@@ -45,6 +49,14 @@ creation and collider additions support Undo. Components are also available
 under **GameObject > Tanuki** and **Add Component > Tanuki**.
 
 ## Supported content
+
+The courtyard is a small outdoor sample with four exterior shops, shoji-style
+windows, terracotta roofs, faceted trees, a gate, planters, benches, crates,
+lanterns and four player starts. Its meshes and materials are generated locally;
+no asset-store downloads are required. Shops are static exterior structures.
+The Unity preview camera and light are outside the export root; their lighting
+does not transfer to Tanuki. Give the sample a new Map ID when using it as the
+starting point for a different map.
 
 Share/load `map.tanukimap`. The `map.json` and `scene.glb` files alongside it are
 inspection outputs. Geometry and PNG textures are embedded; the runtime needs

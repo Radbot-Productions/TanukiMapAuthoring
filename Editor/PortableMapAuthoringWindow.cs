@@ -222,14 +222,9 @@ namespace Radbot.MapAuthoring.Editor
         {
             try
             {
-                const string path="Assets/TanukiMapSample/Room.unity";
-                if(AssetDatabase.LoadAssetAtPath<SceneAsset>(path))
-                {
-                    if(!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-                    EditorSceneManager.OpenScene(path);
-                    var root=Object.FindObjectOfType<PortableMapRoot>(); SelectMap(root); Selection.activeGameObject=root.gameObject;
-                }
-                else PortableMapSample.Create();
+                var root=PortableCourtyardSample.OpenOrCreate();
+                if(!root) return;
+                SelectMap(root);
                 FollowSelection();
             }
             catch(Exception error) { Fail(error.Message); }
