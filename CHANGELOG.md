@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-preview.4
+
+- Added Export & Upload to Workshop and Export & Update Workshop Item to the authoring window.
+- Uploads export the current scene and use Tanuki's Steam backend through an immutable file job.
+- Remember Workshop item IDs per map, track pending/results across editor reloads, and retain job logs for interrupted submissions.
+- Requires Windows and a Tanuki build with the editor-job uploader; current testing uses the developer-only Workshop.
+- Leaving the preview image empty generates a framed map thumbnail in an isolated preview scene.
+
 ## 0.1.0-preview.3
 
 - Export now uses a file-save dialog and writes only the chosen `.tanukimap` file.
@@ -20,6 +28,6 @@
 - Added static GLB geometry, embedded base-color textures, primitive/triangle collision and player-start export into one `.tanukimap` file.
 - Made validation and export share the same conversion path.
 
-This is an authoring prototype. Steam Workshop publishing, portable gameplay
+This is an authoring prototype. Portable gameplay
 scripting, embedded Tanuki gameplay preview, and Unreal/Godot authoring frontends
 are planned separately. This package has not been submitted to OpenUPM.

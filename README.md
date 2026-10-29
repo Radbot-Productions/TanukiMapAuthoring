@@ -5,7 +5,7 @@ markers, validate the supported content, and export one `.tanukimap` file for
 the Unreal runtime prototype. No Unreal Editor is needed for authoring.
 
 **Prototype / prerelease.** This package exports static scenery, collision and
-player starts. Workshop publishing and map scripting are not implemented, and
+player starts, with a direct Workshop publishing frontend. Map scripting is not implemented, and
 this is not yet an OpenUPM release.
 
 ![Courtyard sample rendered in Unity](Documentation~/courtyard.png)
@@ -15,7 +15,7 @@ this is not yet an OpenUPM release.
 Open **Window > Package Manager**, choose **Add package from Git URL**, and paste:
 
 ```text
-https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.3
+https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.4
 ```
 
 Git must be installed and available to Unity. The declared minimum is Unity
@@ -47,6 +47,37 @@ subset below. For local development, choose **Add package from disk** and select
 The panel reports errors and supports corrected retries. Root/player-start
 creation and collider additions support Undo. Components are also available
 under **GameObject > Tanuki** and **Add Component > Tanuki**.
+
+## Export directly to Steam Workshop
+
+The **Steam Workshop** section in **Tanuki > Map Authoring** publishes the current
+scene without a separate manual file export. Windows is supported by this prototype.
+
+1. Run Steam, signed into a developer account authorized for Tanuki.
+2. Choose the **Tanuki Executable**: a Tanuki build that implements the Workshop
+   editor-job protocol. Previously released game builds do not support this yet.
+3. Enter a title. Leave **Preview PNG** empty to generate a framed map overview,
+   or choose your own PNG smaller than 1 MiB. The generated view uses the Scene
+   view's orientation and fits all map geometry; other scene objects/scripts are excluded.
+4. Leave **Item ID** empty to create a map, then choose **Export & Upload to Workshop**.
+   The panel exports a fresh `.tanukimap`, starts Tanuki's Steam uploader, and shows
+   the pending state and final result. No Steam SDK or credentials are installed in Unity.
+5. The returned item ID is remembered per Unity project and Map ID. Choose
+   **Use Last Uploaded Item** and **Export & Update Workshop Item** for revisions.
+   A failed/uncertain submission can still have created an item; retain its ID and
+   inspect the job log before creating another item.
+
+For source development, choose `UnrealEditor.exe` as the executable and set
+**Development Project** to the absolute `Tanuki.uproject` path. Leave that field
+empty for the packaged game. The helper enables Steam only for its own process.
+It runs offscreen and closes when finished. Unity tracks the job across script
+reloads/editor restarts; files and logs remain under `Library/TanukiWorkshop`.
+Do not delete that directory while an upload is pending.
+
+Tanuki's Workshop remains **Only Developers** during testing. Item visibility is
+shared within that restricted Workshop. The uploader does not change the hub's
+access settings or accept Steam legal agreements. If Steam requests agreement
+acceptance, complete it yourself in Steam, then update the recorded item ID.
 
 ## Supported content
 

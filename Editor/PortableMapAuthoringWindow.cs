@@ -15,6 +15,8 @@ namespace Radbot.MapAuthoring.Editor
         [SerializeField] string exportFile="";
         [SerializeField] string message="Choose a map root, or create a new map.";
         [SerializeField] bool hasError;
+        [SerializeField] string workshopTitle="",previewImage="",workshopItem="";
+        [SerializeField] string uploadMapId="";
         Vector2 scroll;
         bool busy;
 
@@ -70,6 +72,8 @@ namespace Radbot.MapAuthoring.Editor
             if (root && (EditorUtility.IsPersistent(root) || !root.gameObject.scene.IsValid()))
                 throw new InvalidOperationException("Select a map root in an open scene, not a prefab asset.");
             map=root; Changed(root ? "Map selected. Validate before exporting." : "Choose a map root.");
+            workshopTitle=root ? root.name : "";
+            workshopItem=root ? PortableMapWorkshopPublisher.GetRememberedItem(root.mapId) : "";
         }
 
         void OnEnable()
@@ -157,7 +161,7 @@ namespace Radbot.MapAuthoring.Editor
                     var serialized=new SerializedObject(map); serialized.Update();
                     EditorGUI.BeginChangeCheck();
                     EditorGUILayout.PropertyField(serialized.FindProperty("mapId"),new GUIContent("Map ID"));
-                    if(EditorGUI.EndChangeCheck()) { serialized.ApplyModifiedProperties(); Changed("Map identity changed. Keep the same ID for revisions of this map."); }
+                    if(EditorGUI.EndChangeCheck()) { serialized.ApplyModifiedProperties(); workshopItem=PortableMapWorkshopPublisher.GetRememberedItem(map.mapId); Changed("Map identity changed. Keep the same ID for revisions of this map."); }
                     else serialized.ApplyModifiedProperties();
                     EditorGUILayout.HelpBox("Keep this ID for future revisions. A different map should have a different ID.",MessageType.Info);
                     EditorGUILayout.LabelField("Player Starts",map.GetComponentsInChildren<PortablePlayerStart>().Count(s=>s.enabled).ToString());
@@ -206,11 +210,58 @@ namespace Radbot.MapAuthoring.Editor
                 }
                 if(!string.IsNullOrEmpty(exportFile) && File.Exists(exportFile) && GUILayout.Button("Show Exported File"))
                     EditorUtility.RevealInFinder(exportFile);
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("Steam Workshop",EditorStyles.boldLabel);
+                EditorGUILayout.HelpBox("Developer-only testing. Run Steam and use the Tanuki game with Workshop upload support. Export & Upload includes the current scene changes.",MessageType.Info);
+                using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending))
+                {
+                    workshopTitle=EditorGUILayout.TextField("Title",workshopTitle);
+                    EditorGUILayout.LabelField("Leave the preview blank to generate a framed map view.",EditorStyles.wordWrappedMiniLabel);
+                    using(new EditorGUILayout.HorizontalScope())
+                    {
+                        previewImage=EditorGUILayout.TextField("Preview PNG",previewImage);
+                        if(GUILayout.Button("Browse",GUILayout.Width(65)))
+                        { var image=EditorUtility.OpenFilePanel("Workshop preview PNG",Path.GetDirectoryName(previewImage)??"","png"); if(image.Length>0) previewImage=image; }
+                    }
+                    workshopItem=EditorGUILayout.TextField(new GUIContent("Item ID","Leave empty for a new item. Keep the returned ID to update that item."),workshopItem);
+                    string remembered=map ? PortableMapWorkshopPublisher.GetRememberedItem(map.mapId) : "";
+                    if(remembered.Length>0 && workshopItem!=remembered && GUILayout.Button("Use Last Uploaded Item ("+remembered+")")) workshopItem=remembered;
+                    using(new EditorGUILayout.HorizontalScope())
+                    {
+                        string executable=EditorGUILayout.TextField("Tanuki Executable",PortableMapWorkshopPublisher.GameExecutable);
+                        if(executable!=PortableMapWorkshopPublisher.GameExecutable) PortableMapWorkshopPublisher.GameExecutable=executable;
+                        if(GUILayout.Button("Browse",GUILayout.Width(65)))
+                        { var executableFile=EditorUtility.OpenFilePanel("Tanuki game executable","","exe"); if(executableFile.Length>0) PortableMapWorkshopPublisher.GameExecutable=executableFile; }
+                    }
+                    string project=EditorGUILayout.TextField(new GUIContent("Development Project","Optional .uproject when using UnrealEditor.exe instead of a packaged Tanuki game."),PortableMapWorkshopPublisher.UnrealProject);
+                    if(project!=PortableMapWorkshopPublisher.UnrealProject) PortableMapWorkshopPublisher.UnrealProject=project;
+                    using(new EditorGUI.DisabledScope(!map))
+                        if(GUILayout.Button(string.IsNullOrEmpty(workshopItem)?"Export & Upload to Workshop":"Export & Update Workshop Item"))
+                        {
+                            if(PortableMapWorkshopPublisher.ExportAndUpload(map,workshopTitle,previewImage,workshopItem)) uploadMapId=map.mapId;
+                        }
+                }
+                if(!string.IsNullOrEmpty(PortableMapWorkshopPublisher.Status))
+                    EditorGUILayout.HelpBox(PortableMapWorkshopPublisher.Status,PortableMapWorkshopPublisher.HasError ? MessageType.Error : MessageType.Info);
             }
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox(message,hasError ? MessageType.Error : MessageType.Info);
-            EditorGUILayout.HelpBox("Prototype: static meshes, basic textured materials, primitive/static mesh collision and player starts. Gameplay scripting, Steam Workshop publishing and embedded Tanuki gameplay preview are not implemented.",MessageType.None);
+            EditorGUILayout.HelpBox("Prototype: static meshes, basic textured materials, primitive/static mesh collision and player starts. Workshop uploads use Tanuki's Steam backend. Gameplay scripting and embedded Tanuki gameplay preview are not implemented.",MessageType.None);
             EditorGUILayout.EndScrollView();
+        }
+
+        void OnInspectorUpdate()
+        {
+            if(!PortableMapWorkshopPublisher.IsPending && !string.IsNullOrEmpty(uploadMapId))
+            {
+                if(map && map.mapId==uploadMapId)
+                {
+                    string item=PortableMapWorkshopPublisher.GetRememberedItem(uploadMapId);
+                    if(!string.IsNullOrEmpty(item)) workshopItem=item;
+                }
+                uploadMapId=""; Repaint();
+            }
+            if(PortableMapWorkshopPublisher.IsPending) Repaint();
         }
 
         public static void OpenSampleAndShow()
