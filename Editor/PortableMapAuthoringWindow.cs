@@ -12,7 +12,7 @@ namespace Radbot.MapAuthoring.Editor
     public sealed class PortableMapAuthoringWindow : EditorWindow
     {
         [SerializeField] PortableMapRoot map;
-        [SerializeField] string exportFolder="";
+        [SerializeField] string exportFile="";
         [SerializeField] string message="Choose a map root, or create a new map.";
         [SerializeField] bool hasError;
         Vector2 scroll;
@@ -110,9 +110,9 @@ namespace Radbot.MapAuthoring.Editor
             return Run("Exporting map",()=>
             {
                 // Always rebuild from current authored state; a previous validation is not export admission.
-                PortableMapExporter.Export(map,destination);
-                exportFolder=Path.GetFullPath(destination);
-                Changed("Exported " + Path.Combine(exportFolder,"map.tanukimap"));
+                PortableMapExporter.ExportFile(map,destination);
+                exportFile=Path.GetFullPath(destination);
+                Changed("Exported " + exportFile);
             });
         }
         bool Run(string title,Action action)
@@ -183,11 +183,11 @@ namespace Radbot.MapAuthoring.Editor
                 EditorGUILayout.LabelField("Export",EditorStyles.boldLabel);
                 using(new EditorGUILayout.HorizontalScope())
                 {
-                    exportFolder=EditorGUILayout.TextField("Folder",exportFolder);
+                    exportFile=EditorGUILayout.TextField("Map File",exportFile);
                     if(GUILayout.Button("Browse",GUILayout.Width(65)))
                     {
-                        string folder=EditorUtility.SaveFolderPanel("Export Tanuki map",exportFolder,map ? map.name : "TanukiMap");
-                        if(!string.IsNullOrEmpty(folder)) exportFolder=folder;
+                        string filename=ChooseExportFile();
+                        if(!string.IsNullOrEmpty(filename)) exportFile=filename;
                     }
                 }
                 using(new EditorGUI.DisabledScope(!map))
@@ -196,16 +196,16 @@ namespace Radbot.MapAuthoring.Editor
                     if(GUILayout.Button("Validate Map")) ValidateMap();
                     if(GUILayout.Button("Export .tanukimap"))
                     {
-                        if(string.IsNullOrWhiteSpace(exportFolder))
+                        if(string.IsNullOrWhiteSpace(exportFile))
                         {
-                            string folder=EditorUtility.SaveFolderPanel("Export Tanuki map","",map.name);
-                            if(!string.IsNullOrEmpty(folder)) ExportMap(folder);
+                            string filename=ChooseExportFile();
+                            if(!string.IsNullOrEmpty(filename)) ExportMap(filename);
                         }
-                        else ExportMap(exportFolder);
+                        else ExportMap(exportFile);
                     }
                 }
-                if(!string.IsNullOrEmpty(exportFolder) && File.Exists(Path.Combine(exportFolder,"map.tanukimap")) && GUILayout.Button("Show Exported File"))
-                    EditorUtility.RevealInFinder(Path.Combine(exportFolder,"map.tanukimap"));
+                if(!string.IsNullOrEmpty(exportFile) && File.Exists(exportFile) && GUILayout.Button("Show Exported File"))
+                    EditorUtility.RevealInFinder(exportFile);
             }
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox(message,hasError ? MessageType.Error : MessageType.Info);
@@ -217,6 +217,11 @@ namespace Radbot.MapAuthoring.Editor
         {
             var window=Open(); window.OpenSample();
             if(SceneView.lastActiveSceneView) SceneView.lastActiveSceneView.FrameSelected();
+        }
+        string ChooseExportFile()
+        {
+            return EditorUtility.SaveFilePanel("Export Tanuki map",string.IsNullOrEmpty(exportFile) ? "" : Path.GetDirectoryName(exportFile),
+                string.IsNullOrEmpty(exportFile) ? (map ? map.mapId : "TanukiMap") : Path.GetFileNameWithoutExtension(exportFile),"tanukimap");
         }
         void OpenSample()
         {

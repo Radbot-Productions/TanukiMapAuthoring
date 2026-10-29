@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-preview.3
+
+- Export now uses a file-save dialog and writes only the chosen `.tanukimap` file.
+- JSON, GLB, textures, collision and player starts are embedded in that single file; normal exports no longer write loose inspection copies.
+- Failed replacement preserves the previous valid file and supports corrected retries.
+
 ## 0.1.0-preview.2
 
 - Added a stylized courtyard sample with timber shops, terracotta roofs, shoji windows, faceted trees, an entry gate and courtyard props.

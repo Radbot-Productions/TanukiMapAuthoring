@@ -15,7 +15,7 @@ this is not yet an OpenUPM release.
 Open **Window > Package Manager**, choose **Add package from Git URL**, and paste:
 
 ```text
-https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.2
+https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.3
 ```
 
 Git must be installed and available to Unity. The declared minimum is Unity
@@ -41,8 +41,8 @@ subset below. For local development, choose **Add package from disk** and select
 6. Keep the same **Map ID** for revisions. New map roots get unique IDs.
 7. Choose **Validate Map**. This performs the same complete conversion as export,
    including texture readback, without writing export files.
-8. Pick a folder and choose **Export .tanukimap**. Export validates the current
-   scene again. **Show Exported File** reveals the result.
+8. Choose **Export .tanukimap**, pick a filename and save. Export validates the
+   current scene again and writes exactly one file. **Show Exported File** reveals it.
 
 The panel reports errors and supports corrected retries. Root/player-start
 creation and collider additions support Undo. Components are also available
@@ -58,9 +58,11 @@ The Unity preview camera and light are outside the export root; their lighting
 does not transfer to Tanuki. Give the sample a new Map ID when using it as the
 starting point for a different map.
 
-Share/load `map.tanukimap`. The `map.json` and `scene.glb` files alongside it are
-inspection outputs. Geometry and PNG textures are embedded; the runtime needs
-no Unity project, assets, AssetBundles or C# assemblies.
+Share/load the saved `.tanukimap` file. It contains the JSON manifest and GLB,
+including geometry, PNG textures, collision and player starts. There are no
+required sidecar files or folders, Unity assets, AssetBundles or C# assemblies.
+The batch diagnostics API can explicitly write loose JSON/GLB inspection copies;
+normal authoring exports do not.
 
 - Static readable triangle meshes, including nested, scaled and mirrored mesh transforms.
 - Standard/URP Lit base-color textures, scalar metallic/smoothness, opaque/cutout materials.

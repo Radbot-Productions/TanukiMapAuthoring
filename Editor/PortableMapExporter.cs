@@ -21,13 +21,19 @@ namespace Radbot.MapAuthoring.Editor
         {
             var root = Selection.activeGameObject ? Selection.activeGameObject.GetComponentInParent<PortableMapRoot>() : null;
             if (!root) throw new InvalidOperationException("Select a Portable Map Root or one of its children.");
-            string destination = EditorUtility.SaveFolderPanel("Export Tanuki map", "", root.mapId);
-            if (destination.Length > 0) Export(root, destination);
+            string destination = EditorUtility.SaveFilePanel("Export Tanuki map", "", root.mapId, "tanukimap");
+            if (destination.Length > 0) ExportFile(root, destination);
         }
 
+        /// <summary>Diagnostic folder export for batch fixtures; author-facing export uses ExportFile.</summary>
         public static void Export(PortableMapRoot root, string destination)
         {
             Prepare(root).Write(destination);
+        }
+
+        public static void ExportFile(PortableMapRoot root, string filename)
+        {
+            Prepare(root).WriteFile(filename);
         }
 
         /// <summary>The editor's validation and export use the same complete conversion, including materials and collision.</summary>
@@ -126,16 +132,28 @@ namespace Radbot.MapAuthoring.Editor
                 this.scene=scene; this.json=json; MeshCount=meshes; ColliderCount=colliders; PlayerStartCount=starts; SceneHash=hash;
             }
 
+            /// <summary>Explicit diagnostic output: loose inspection copies plus the self-contained map.</summary>
             public void Write(string destination)
             {
             if (string.IsNullOrWhiteSpace(destination)) throw new ArgumentException("Choose an export folder.",nameof(destination));
             Directory.CreateDirectory(destination);
-            // Manifest is the final commit marker. A failed write produces a detectable hash mismatch.
+            // Inspection copies are optional. The runtime opens only the transactional map file below.
             File.WriteAllBytes(Path.Combine(destination,"scene.glb"),scene);
             File.WriteAllText(Path.Combine(destination,"map.json"),json,new UTF8Encoding(false));
+            WriteFile(Path.Combine(destination,"map.tanukimap"));
+            }
+
+            /// <summary>Writes the self-contained map only. JSON and GLB are embedded, never external references.</summary>
+            public void WriteFile(string filename)
+            {
+            if (string.IsNullOrWhiteSpace(filename)) throw new ArgumentException("Choose a .tanukimap filename.",nameof(filename));
+            string package=Path.GetFullPath(filename);
+            if (!string.Equals(Path.GetExtension(package),".tanukimap",StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The export filename must end in .tanukimap.",nameof(filename));
+            string parent=Path.GetDirectoryName(package);
+            Directory.CreateDirectory(parent);
             byte[] manifest=Encoding.UTF8.GetBytes(json);
-            string package=Path.Combine(destination,"map.tanukimap");
-            string temporary=Path.Combine(destination,".map-"+Guid.NewGuid().ToString("N")+".tmp");
+            string temporary=Path.Combine(parent,".map-"+Guid.NewGuid().ToString("N")+".tmp");
             try
             {
                 using(var output=File.Create(temporary))
@@ -148,7 +166,7 @@ namespace Radbot.MapAuthoring.Editor
                 else File.Move(temporary,package);
             }
             finally { if(File.Exists(temporary)) File.Delete(temporary); }
-            Debug.Log($"TANUKI_MAP_EXPORTED path={destination} meshes={MeshCount} starts={PlayerStartCount} sha1={SceneHash}");
+            Debug.Log($"TANUKI_MAP_EXPORTED path={package} meshes={MeshCount} starts={PlayerStartCount} sha1={SceneHash}");
             }
         }
 
