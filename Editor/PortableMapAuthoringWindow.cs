@@ -82,6 +82,7 @@ namespace Radbot.MapAuthoring.Editor
             Undo.undoRedoPerformed+=OnEdited;
             EditorApplication.hierarchyChanged+=OnEdited;
             EditorApplication.projectChanged+=OnEdited;
+            PortableMapWorkshopPublisher.Connect();
             FollowSelection();
         }
         void OnDisable()
@@ -212,7 +213,13 @@ namespace Radbot.MapAuthoring.Editor
                     EditorUtility.RevealInFinder(exportFile);
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Steam Workshop",EditorStyles.boldLabel);
-                EditorGUILayout.HelpBox("Developer-only testing. Run Steam and use the Tanuki game with Workshop upload support. Export & Upload includes the current scene changes.",MessageType.Info);
+                EditorGUILayout.HelpBox("Developer-only testing. Run Steam and sign in with Tanuki access. Export & Upload publishes the current scene directly from Unity.",MessageType.Info);
+                using(new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField(PortableMapWorkshopPublisher.Account);
+                    using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending))
+                        if(GUILayout.Button("Connect Steam",GUILayout.Width(110))) PortableMapWorkshopPublisher.Connect();
+                }
                 using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending))
                 {
                     workshopTitle=EditorGUILayout.TextField("Title",workshopTitle);
@@ -226,16 +233,7 @@ namespace Radbot.MapAuthoring.Editor
                     workshopItem=EditorGUILayout.TextField(new GUIContent("Item ID","Leave empty for a new item. Keep the returned ID to update that item."),workshopItem);
                     string remembered=map ? PortableMapWorkshopPublisher.GetRememberedItem(map.mapId) : "";
                     if(remembered.Length>0 && workshopItem!=remembered && GUILayout.Button("Use Last Uploaded Item ("+remembered+")")) workshopItem=remembered;
-                    using(new EditorGUILayout.HorizontalScope())
-                    {
-                        string executable=EditorGUILayout.TextField("Tanuki Executable",PortableMapWorkshopPublisher.GameExecutable);
-                        if(executable!=PortableMapWorkshopPublisher.GameExecutable) PortableMapWorkshopPublisher.GameExecutable=executable;
-                        if(GUILayout.Button("Browse",GUILayout.Width(65)))
-                        { var executableFile=EditorUtility.OpenFilePanel("Tanuki game executable","","exe"); if(executableFile.Length>0) PortableMapWorkshopPublisher.GameExecutable=executableFile; }
-                    }
-                    string project=EditorGUILayout.TextField(new GUIContent("Development Project","Optional .uproject when using UnrealEditor.exe instead of a packaged Tanuki game."),PortableMapWorkshopPublisher.UnrealProject);
-                    if(project!=PortableMapWorkshopPublisher.UnrealProject) PortableMapWorkshopPublisher.UnrealProject=project;
-                    using(new EditorGUI.DisabledScope(!map))
+                    using(new EditorGUI.DisabledScope(!map || !PortableMapWorkshopPublisher.CanUpload(out _)))
                         if(GUILayout.Button(string.IsNullOrEmpty(workshopItem)?"Export & Upload to Workshop":"Export & Update Workshop Item"))
                         {
                             if(PortableMapWorkshopPublisher.ExportAndUpload(map,workshopTitle,previewImage,workshopItem)) uploadMapId=map.mapId;
@@ -246,7 +244,7 @@ namespace Radbot.MapAuthoring.Editor
             }
             EditorGUILayout.Space();
             EditorGUILayout.HelpBox(message,hasError ? MessageType.Error : MessageType.Info);
-            EditorGUILayout.HelpBox("Prototype: static meshes, basic textured materials, primitive/static mesh collision and player starts. Workshop uploads use Tanuki's Steam backend. Gameplay scripting and embedded Tanuki gameplay preview are not implemented.",MessageType.None);
+            EditorGUILayout.HelpBox("Prototype: static meshes, basic textured materials, primitive/static mesh collision and player starts. Workshop publishing uses your logged-in Steam account. Gameplay scripting and embedded Tanuki gameplay preview are not implemented.",MessageType.None);
             EditorGUILayout.EndScrollView();
         }
 

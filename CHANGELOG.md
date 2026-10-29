@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-preview.6
+
+- Publish directly through the logged-in Steam client inside Unity Editor; removed game executable/project path setup.
+- Display the connected Steam account and expose reconnect/pending readiness.
+- Recover uploads across script reloads, retain created item IDs before submission, and keep preview/receipt files outside Workshop map content.
+- Include pinned, editor-only Steamworks.NET bindings and the matching Windows redistributable; reject conflicting Steam integrations.
+
 ## 0.1.0-preview.5
 
 - Start Workshop helper jobs in the neutral entry world for both source and packaged game executables, keeping rendered splash/lobby UI out of the graphics-free uploader.
