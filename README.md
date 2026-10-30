@@ -19,8 +19,11 @@ https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.7
 ```
 
 Git must be installed and available to Unity. The declared minimum is Unity
-2021.3. Validation currently uses Unity 2023.1.0b18; other editor versions have
-not yet been qualified. Built-in and URP/Lit materials are supported within the
+2021.3. Validated editors include Unity 2023.1.0b18 and Unity 6.6
+**6000.6.7f1** (Windows). Unity 6 checks cover Git Package Manager installation,
+authoring commands, editable import/export, metadata and collision round trips,
+and rendered previews in Built-in and URP 17.6.0. Newer patches need fresh validation.
+Built-in and URP/Lit materials are supported within the
 subset below. For local development, choose **Add package from disk** and select
 `package.json`.
 
