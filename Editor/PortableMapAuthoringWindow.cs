@@ -19,6 +19,8 @@ namespace Radbot.MapAuthoring.Editor
         [SerializeField] string uploadMapId="";
         Vector2 scroll;
         bool busy;
+        [SerializeField] string openWorkshopItem="";
+        [SerializeField] bool forkImported=true;
 
         public PortableMapRoot SelectedMap => map;
         public string LastMessage => message;
@@ -120,6 +122,19 @@ namespace Radbot.MapAuthoring.Editor
                 Changed("Exported " + exportFile);
             });
         }
+        public bool OpenMapFile(string filename,string folder,bool fork)
+        {
+            return Run("Opening map",()=>
+            {
+                SelectMap(PortableMapImporter.Import(filename,folder,fork));
+                Changed("Opened editable map in "+folder+"/Map.unity");
+            });
+        }
+        string ChooseImportFolder()
+        {
+            string path=EditorUtility.SaveFilePanelInProject("New folder for imported map","Imported Map","","Choose a new folder name. A scene and its assets will be created inside it.");
+            return path;
+        }
         bool Run(string title,Action action)
         {
             if (busy) return false;
@@ -141,6 +156,29 @@ namespace Radbot.MapAuthoring.Editor
             EditorGUILayout.Space();
             using(new EditorGUI.DisabledScope(busy || EditorApplication.isPlayingOrWillChangePlaymode))
             {
+                EditorGUILayout.LabelField("Open Map",EditorStyles.boldLabel);
+                forkImported=EditorGUILayout.Toggle(new GUIContent("Fork as New Map","Create a new map identity. Required for another author's Workshop map."),forkImported);
+                using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending))
+                {
+                    if(GUILayout.Button("Open .tanukimap File"))
+                    {
+                        string file=EditorUtility.OpenFilePanel("Open Tanuki map","","tanukimap");
+                        if(file.Length>0) {string folder=ChooseImportFolder(); if(folder.Length>0) OpenMapFile(file,folder,forkImported);}
+                    }
+                    openWorkshopItem=EditorGUILayout.TextField("Workshop Item ID",openWorkshopItem);
+                    using(new EditorGUI.DisabledScope(!PortableMapWorkshopPublisher.CanUpload(out _)))
+                    {
+                        if(GUILayout.Button("Refresh Subscribed Workshop Maps"))
+                        {PortableMapWorkshopPublisher.BrowseSubscribed();}
+                        foreach(var item in PortableMapWorkshopPublisher.Items)
+                            if(GUILayout.Button(item.title+" ("+item.id+")")) openWorkshopItem=item.id;
+                        using(new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(openWorkshopItem)))
+                            if(GUILayout.Button("Download & Open Workshop Map"))
+                            {string folder=ChooseImportFolder(); if(folder.Length>0) PortableMapWorkshopPublisher.DownloadAndOpen(openWorkshopItem,folder,forkImported);}
+                    }
+                }
+                EditorGUILayout.HelpBox("Opens a new additive scene and creates editable assets in a new folder. Original prefab links and scripts are not restored.",MessageType.None);
+                EditorGUILayout.Space();
                 EditorGUI.BeginChangeCheck();
                 var chosen=(PortableMapRoot)EditorGUILayout.ObjectField("Map Root",map,typeof(PortableMapRoot),true);
                 if(EditorGUI.EndChangeCheck()) { try { SelectMap(chosen); } catch(Exception e) { Fail(e.Message); } }

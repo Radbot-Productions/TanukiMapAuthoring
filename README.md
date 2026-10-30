@@ -15,7 +15,7 @@ this is not yet an OpenUPM release.
 Open **Window > Package Manager**, choose **Add package from Git URL**, and paste:
 
 ```text
-https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.6
+https://github.com/Radbot-Productions/TanukiMapAuthoring.git#v0.1.0-preview.7
 ```
 
 Git must be installed and available to Unity. The declared minimum is Unity
@@ -25,6 +25,27 @@ subset below. For local development, choose **Add package from disk** and select
 `package.json`.
 
 ## Author a map
+
+### Open and extend an existing map
+
+Use **Open .tanukimap** in **Tanuki > Map Authoring**, or refresh the subscribed
+Workshop list and choose **Download & Open**. Import creates a new asset folder
+and additive scene containing durable meshes, textures, materials, collision and
+player starts. Save any untitled scene first. Existing imported assets are never
+overwritten.
+
+**Fork** creates a new map identity and a new Workshop item on upload. Turn Fork
+off to continue your own item; its item ID is remembered for subsequent updates.
+Another author's item must be forked. Publishing uses the logged-in Steam client
+and still requires developer access while Tanuki's Workshop is restricted.
+
+New exports include optional names, hierarchy, local transforms and collider
+settings. Older files reconstruct from their baked runtime data. Original Unity
+prefab links, scripts and arbitrary editor components cannot be recovered from a
+runtime map. Across Unreal/Unity, primitive colliders and starts may be flattened
+to preserve their runtime placement under nonuniformly scaled hierarchies.
+
+### Create a new map
 
 1. Open **Tanuki > Map Authoring**.
 2. Choose **Open Sample Map**, or **Create Map Root**. The sample generator creates

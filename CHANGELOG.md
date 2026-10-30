@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-preview.7
+
+- Open a local `.tanukimap` as an editable scene with persistent mesh, material and texture assets.
+- Browse subscribed Workshop maps and download them directly into Unity. Continue your own item or fork a new map identity.
+- Preserve supported object names, hierarchy, transforms, colliders and player starts through optional authoring metadata; older exports still open.
+- Retain other saved scenes and reject overwriting an existing import folder. Save an untitled scene before importing.
+- Keep Workshop operation recovery working when a diagnostic receipt cannot be written.
+
 ## 0.1.0-preview.6
 
 - Publish directly through the logged-in Steam client inside Unity Editor; removed game executable/project path setup.

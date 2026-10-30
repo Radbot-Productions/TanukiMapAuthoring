@@ -20,7 +20,9 @@ namespace Radbot.MapAuthoring.Editor
         { public int version=1; public string jobId,action="upload",file,title,preview,itemId; }
         [Serializable] public sealed class Result
         { public int version=1; public string jobId,message,itemId,hash,file; public bool pending,success; }
-        enum Stage { Create,Details,Submit,Subscribe }
+        enum Stage { Create,Details,Submit,Subscribe,DownloadDetails,Download,Browse }
+        [Serializable] public sealed class WorkshopItem {public string id,title,preview,hash;}
+        public static WorkshopItem[] Items {get;private set;}=Array.Empty<WorkshopItem>();
         [Serializable] sealed class ActiveUpload
         {
             public int schema=2;
@@ -28,6 +30,11 @@ namespace Radbot.MapAuthoring.Editor
             public string directory,mapId,item,call,query,owner,hash;
             public long started;
             public Stage stage;
+            public string assetFolder,metadata;
+            public bool fork;
+            public string[] browseIds;
+            public WorkshopItem[] browseItems;
+            public int browseOffset;
         }
         static ActiveUpload active;
         static bool initialized;
@@ -44,6 +51,7 @@ namespace Radbot.MapAuthoring.Editor
         static CallResult<SteamUGCQueryCompleted_t> details;
         static CallResult<SubmitItemUpdateResult_t> submitted;
         static CallResult<RemoteStorageSubscribePublishedFileResult_t> subscribed;
+        static Callback<DownloadItemResult_t> downloaded;
 #endif
         static PortableMapWorkshopPublisher()
         {
@@ -136,13 +144,49 @@ namespace Radbot.MapAuthoring.Editor
         public static bool CanUpload(out string reason)
         {
             reason="";
-            if(IsPending) reason="A Workshop upload is already pending.";
+            if(IsPending) reason="A Workshop operation is already pending.";
             else if(EditorApplication.isPlayingOrWillChangePlaymode) reason="Publish from Edit mode.";
             else if(!initialized) reason="Connect to the logged-in Steam client first.";
 #if UNITY_EDITOR_WIN
             else if(!SteamUser.BLoggedOn() || SteamUtils.GetAppID().m_AppId!=ConsumerAppId) reason="Steam account/app context is no longer available.";
 #endif
             return reason.Length==0;
+        }
+        public static string[] GetSubscribedItems()
+        {
+            if(!CanUpload(out string reason)) throw new InvalidOperationException(reason);
+#if UNITY_EDITOR_WIN
+            var items=new PublishedFileId_t[SteamUGC.GetNumSubscribedItems()];
+            uint count=SteamUGC.GetSubscribedItems(items,(uint)items.Length);
+            var result=new string[count]; for(int i=0;i<count;i++) result[i]=items[i].m_PublishedFileId.ToString(CultureInfo.InvariantCulture);
+            return result;
+#else
+            return Array.Empty<string>();
+#endif
+        }
+        public static bool DownloadAndOpen(string itemId,string assetFolder,bool fork)
+        {
+            if(IsPending) return false;
+            try
+            {
+                ValidateConfiguration("Download","",itemId);
+                if(string.IsNullOrEmpty(itemId)) throw new InvalidOperationException("Enter a Workshop item ID.");
+                if(!Connect() || !CanUpload(out _)) return false;
+#if UNITY_EDITOR_WIN
+                string directory=Path.GetFullPath(Path.Combine(Application.dataPath,"../Library/TanukiWorkshop",Guid.NewGuid().ToString("N")));
+                Directory.CreateDirectory(directory);
+                active=new ActiveUpload {request=new Request {jobId=Guid.NewGuid().ToString("N"),action="download",itemId=itemId},directory=directory,
+                    item=itemId,assetFolder=assetFolder,fork=fork,owner=SteamUser.GetSteamID().ToString(),started=DateTime.UtcNow.Ticks,query="0"};
+                var query=SteamUGC.CreateQueryUGCDetailsRequest(new[]{new PublishedFileId_t(ulong.Parse(itemId,CultureInfo.InvariantCulture))},1);
+                active.query=query.m_UGCQueryHandle.ToString(CultureInfo.InvariantCulture);
+                if(!SteamUGC.SetReturnMetadata(query,true)) throw new InvalidOperationException("Steam refused the map metadata query.");
+                BeginCall(Stage.DownloadDetails,SteamUGC.SendQueryUGCRequest(query));
+                return active!=null;
+#else
+                return false;
+#endif
+            }
+            catch(Exception e) {if(active!=null) Finish(false,e.Message); else {Status=e.Message; HasError=true;} return false;}
         }
         public static Request PrepareUpload(PortableMapRoot map,string directory,string title,string preview,string itemId)
         {
@@ -186,12 +230,54 @@ namespace Radbot.MapAuthoring.Editor
             catch(Exception e)
             { if(active!=null) Finish(false,e.Message); else { Status=e.Message; HasError=true; } return false; }
         }
+        public static bool BrowseSubscribed()
+        {
+            if(IsPending) return false;
+            try
+            {
+                if(!Connect() || !CanUpload(out _)) return false;
+                string[] ids=GetSubscribedItems(); Items=Array.Empty<WorkshopItem>();
+                if(ids.Length==0) {Status="No subscribed Tanuki maps. Subscribe in Steam Workshop, then refresh."; HasError=false; return true;}
 #if UNITY_EDITOR_WIN
+                string directory=Path.GetFullPath(Path.Combine(Application.dataPath,"../Library/TanukiWorkshop",Guid.NewGuid().ToString("N"))); Directory.CreateDirectory(directory);
+                active=new ActiveUpload {request=new Request {jobId=Guid.NewGuid().ToString("N"),action="browse"},directory=directory,browseIds=ids,browseItems=Array.Empty<WorkshopItem>(),owner=SteamUser.GetSteamID().ToString(),started=DateTime.UtcNow.Ticks,query="0"};
+                QueryBrowse(); return active!=null;
+#else
+                return false;
+#endif
+            }
+            catch(Exception e) {if(active!=null) Finish(false,e.Message); else {Status=e.Message; HasError=true;} return false;}
+        }
+#if UNITY_EDITOR_WIN
+        static void QueryBrowse()
+        {
+            int count=Math.Min(50,active.browseIds.Length-active.browseOffset); var ids=new PublishedFileId_t[count];
+            for(int i=0;i<count;i++) ids[i]=new PublishedFileId_t(ulong.Parse(active.browseIds[active.browseOffset+i],CultureInfo.InvariantCulture));
+            var query=SteamUGC.CreateQueryUGCDetailsRequest(ids,(uint)count); active.query=query.m_UGCQueryHandle.ToString(CultureInfo.InvariantCulture);
+            if(!SteamUGC.SetReturnMetadata(query,true)) throw new InvalidOperationException("Steam refused map metadata.");
+            BeginCall(Stage.Browse,SteamUGC.SendQueryUGCRequest(query));
+        }
+        static void OnBrowse(SteamUGCQueryCompleted_t result,bool failed)
+        {
+            if(active==null) return;
+            if(failed || result.m_eResult!=EResult.k_EResultOK) throw new InvalidOperationException("Steam could not read subscribed maps: "+result.m_eResult);
+            var query=new UGCQueryHandle_t(ulong.Parse(active.query,CultureInfo.InvariantCulture));
+            var items=new System.Collections.Generic.List<WorkshopItem>(active.browseItems);
+            for(uint i=0;i<result.m_unNumResultsReturned;i++)
+            {
+                if(!SteamUGC.GetQueryUGCResult(query,i,out var item) || item.m_eResult!=EResult.k_EResultOK || item.m_bBanned || item.m_nConsumerAppID.m_AppId!=ConsumerAppId || !SteamUGC.GetQueryUGCMetadata(query,i,out string metadata,1024) || !metadata.StartsWith("tanukimap/1:",StringComparison.Ordinal) || metadata.Length!=52) continue;
+                SteamUGC.GetQueryUGCPreviewURL(query,i,out string preview,4096);
+                items.Add(new WorkshopItem {id=item.m_nPublishedFileId.m_PublishedFileId.ToString(CultureInfo.InvariantCulture),title=item.m_rgchTitle,preview=preview,hash=metadata.Substring(12)});
+            }
+            SteamUGC.ReleaseQueryUGCRequest(query); active.query="0"; active.browseItems=items.ToArray(); active.browseOffset+=50;
+            if(active.browseOffset<active.browseIds.Length) {QueryBrowse(); return;}
+            Items=active.browseItems; Finish(true,Items.Length+" subscribed Tanuki maps loaded.");
+        }
         static void BeginCall(Stage stage,SteamAPICall_t call)
         {
             if(call==SteamAPICall_t.Invalid) throw new InvalidOperationException("Steam refused the publishing operation.");
             active.stage=stage; active.call=call.m_SteamAPICall.ToString(CultureInfo.InvariantCulture);
-            Status="Steam Workshop upload pending ("+stage+")"; Persist(); BindCurrentCall();
+            Status="Steam Workshop operation pending ("+stage+")"; Persist(); BindCurrentCall();
         }
         static void BindCurrentCall()
         {
@@ -202,10 +288,53 @@ namespace Radbot.MapAuthoring.Editor
                 case Stage.Details: details=CallResult<SteamUGCQueryCompleted_t>.Create((v,f)=>Dispatch(()=>OnDetails(v,f))); details.Set(call); break;
                 case Stage.Submit: submitted=CallResult<SubmitItemUpdateResult_t>.Create((v,f)=>Dispatch(()=>OnSubmitted(v,f))); submitted.Set(call); break;
                 case Stage.Subscribe: subscribed=CallResult<RemoteStorageSubscribePublishedFileResult_t>.Create((v,f)=>Dispatch(()=>OnSubscribed(v,f))); subscribed.Set(call); break;
+                case Stage.DownloadDetails: details=CallResult<SteamUGCQueryCompleted_t>.Create((v,f)=>Dispatch(()=>OnDownloadDetails(v,f))); details.Set(call); break;
+                case Stage.Browse: details=CallResult<SteamUGCQueryCompleted_t>.Create((v,f)=>Dispatch(()=>OnBrowse(v,f))); details.Set(call); break;
+                case Stage.Download: downloaded=Callback<DownloadItemResult_t>.Create(v=>Dispatch(()=>
+                {
+                    if(active==null || active.stage!=Stage.Download || v.m_unAppID.m_AppId!=ConsumerAppId || v.m_nPublishedFileId.m_PublishedFileId.ToString(CultureInfo.InvariantCulture)!=active.item) return;
+                    if(v.m_eResult!=EResult.k_EResultOK) Finish(false,"Steam map download failed: "+v.m_eResult);
+                    else TryOpenDownload();
+                })); break;
             }
         }
+        static void OnDownloadDetails(SteamUGCQueryCompleted_t value,bool failed)
+        {
+            if(active==null) return;
+            var query=new UGCQueryHandle_t(ulong.Parse(active.query,CultureInfo.InvariantCulture));
+            if(failed || value.m_eResult!=EResult.k_EResultOK || value.m_unNumResultsReturned!=1 || !SteamUGC.GetQueryUGCResult(query,0,out var item))
+                throw new InvalidOperationException("Steam cannot read the map item: "+value.m_eResult);
+            if(item.m_eResult!=EResult.k_EResultOK || item.m_nConsumerAppID.m_AppId!=ConsumerAppId || item.m_bBanned || item.m_nPublishedFileId.m_PublishedFileId.ToString(CultureInfo.InvariantCulture)!=active.item)
+                throw new InvalidOperationException("Workshop item is inaccessible, banned or belongs to another game.");
+            if(!SteamUGC.GetQueryUGCMetadata(query,0,out string metadata,1024) || !metadata.StartsWith("tanukimap/1:",StringComparison.Ordinal) || metadata.Length!=52 || !System.Text.RegularExpressions.Regex.IsMatch(metadata.Substring(12),"\\A[0-9a-fA-F]{40}\\z"))
+                throw new InvalidOperationException("Workshop item is missing valid Tanuki map metadata.");
+            if(!active.fork && item.m_ulSteamIDOwner.ToString(CultureInfo.InvariantCulture)!=active.owner)
+                throw new InvalidOperationException("Use Fork when opening another author's Workshop map.");
+            active.metadata=metadata; active.request.title=item.m_rgchTitle;
+            SteamUGC.ReleaseQueryUGCRequest(query); active.query="0";
+            active.stage=Stage.Download; active.call="0"; Status="Downloading Workshop map..."; Persist(); BindCurrentCall();
+            if(!SteamUGC.DownloadItem(new PublishedFileId_t(ulong.Parse(active.item,CultureInfo.InvariantCulture)),true))
+                throw new InvalidOperationException("Steam refused the map download.");
+        }
+        static void TryOpenDownload()
+        {
+            var id=new PublishedFileId_t(ulong.Parse(active.item,CultureInfo.InvariantCulture));
+            var state=(EItemState)SteamUGC.GetItemState(id);
+            if((state&EItemState.k_EItemStateInstalled)==0 || (state&(EItemState.k_EItemStateNeedsUpdate|EItemState.k_EItemStateDownloading|EItemState.k_EItemStateDownloadPending))!=0) return;
+            if(!SteamUGC.GetItemInstallInfo(id,out _,out string directory,4096,out _)) return;
+            string file=Path.Combine(directory,"map.tanukimap");
+            if(!File.Exists(file) || !string.Equals(PortableMapImporter.FileHash(file),active.metadata.Substring(12),StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Downloaded map is missing or does not match the Workshop revision.");
+            // Import a verified snapshot, never modify Steam's installed content.
+            string snapshot=Path.Combine(active.directory,"map.tanukimap"); File.Copy(file,snapshot,false);
+            if(!string.Equals(PortableMapImporter.FileHash(snapshot),active.metadata.Substring(12),StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Workshop content changed while copying.");
+            var root=PortableMapImporter.Import(snapshot,active.assetFolder,active.fork);
+            if(!active.fork) {active.mapId=root.mapId; Persist();}
+            PortableMapAuthoringWindow.Open().SelectMap(root);
+            Finish(true,"Workshop map opened in "+active.assetFolder+"/Map.unity");
+        }
         static void Dispatch(Action action)
-        { try { action(); } catch(Exception e) { Finish(false,e.Message+" Check the recorded item ID before retrying."); } }
+        { try { action(); } catch(Exception e) { Debug.LogWarning(e.ToString()); Finish(false,e.Message+(active?.request.action=="upload"?" Check the recorded item ID before retrying.":"")); } }
         static void OnCreated(CreateItemResult_t value,bool failed)
         {
             if(active==null) return;
@@ -254,9 +383,12 @@ namespace Radbot.MapAuthoring.Editor
         static void Persist()
         {
             EditorPrefs.SetString(ActiveKey,JsonUtility.ToJson(active));
-            if(!string.IsNullOrEmpty(active.item) && active.item!="0")
+            if(!string.IsNullOrEmpty(active.mapId) && !string.IsNullOrEmpty(active.item) && active.item!="0")
             { EditorPrefs.SetString(ProjectKey+".Item."+Key(active.mapId),active.item); LastItemId=active.item; }
-            WriteResult(true,false,Status);
+            // EditorPrefs is the reload-recovery state. This local receipt is diagnostic only;
+            // a receipt sharing violation must not interrupt a valid SDK operation.
+            try {WriteResult(true,false,Status);}
+            catch(IOException e) {Debug.LogWarning("Tanuki Workshop diagnostic receipt could not be written: "+e);}
         }
         static void WriteResult(bool pending,bool success,string message)
         {
@@ -272,7 +404,7 @@ namespace Radbot.MapAuthoring.Editor
 #if UNITY_EDITOR_WIN
             if(initialized && !string.IsNullOrEmpty(active.query) && active.query!="0") SteamUGC.ReleaseQueryUGCRequest(new UGCQueryHandle_t(ulong.Parse(active.query,CultureInfo.InvariantCulture)));
 #endif
-            if(!string.IsNullOrEmpty(active.item) && active.item!="0") { EditorPrefs.SetString(ProjectKey+".Item."+Key(active.mapId),active.item); LastItemId=active.item; }
+            if(!string.IsNullOrEmpty(active.mapId) && !string.IsNullOrEmpty(active.item) && active.item!="0") { EditorPrefs.SetString(ProjectKey+".Item."+Key(active.mapId),active.item); LastItemId=active.item; }
             Status=message; HasError=!success;
             try { WriteResult(false,success,message); }
             catch(IOException e) { Status+=" Receipt could not be saved: "+e.Message; }
@@ -284,6 +416,7 @@ namespace Radbot.MapAuthoring.Editor
 #if UNITY_EDITOR_WIN
             created?.Dispose(); details?.Dispose(); submitted?.Dispose(); subscribed?.Dispose();
             created=null; details=null; submitted=null; subscribed=null;
+            downloaded?.Dispose(); downloaded=null;
 #endif
         }
         static void ShutdownSteam()
@@ -305,6 +438,7 @@ namespace Radbot.MapAuthoring.Editor
 #if UNITY_EDITOR_WIN
                 if(!SteamUser.BLoggedOn() || SteamUser.GetSteamID().ToString()!=active.owner) { Finish(false,"Steam account disconnected/changed during the upload. Check the recorded item ID before retrying."); return; }
                 SteamAPI.RunCallbacks();
+                if(active!=null && active.stage==Stage.Download) TryOpenDownload();
 #endif
             }
             catch(Exception e) { Finish(false,e.Message+" Check Steam before retrying the recorded item ID."); }

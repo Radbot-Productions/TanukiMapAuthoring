@@ -47,6 +47,7 @@ namespace Radbot.MapAuthoring.Editor
             if (root.GetComponentsInChildren<Rigidbody>().Length != 0) throw new InvalidOperationException("Dynamic rigidbodies are unsupported in static map exports.");
             if (root.GetComponentsInChildren<LODGroup>().Length != 0) throw new InvalidOperationException("Select/bake one mesh LOD and remove LODGroup before prototype export.");
             var glb = new Glb(root.transform);
+            var authoring = new PortableMapAuthoringData.Capture(root.transform);
             var meshes = new List<object>(); var colliders = new List<object>(); var markers = new List<object>();
             int serial = 0;
             foreach (var renderer in root.GetComponentsInChildren<MeshRenderer>())
@@ -56,13 +57,16 @@ namespace Radbot.MapAuthoring.Editor
                 if (!filter || !filter.sharedMesh) throw new InvalidOperationException("Missing MeshFilter: " + renderer.name);
                 if (renderer.sharedMaterials.Length != filter.sharedMesh.subMeshCount) throw new InvalidOperationException("Each submesh needs exactly one material; layered extra materials are unsupported: " + renderer.name);
                 int index = glb.AddMesh(filter.sharedMesh, renderer.transform, renderer.sharedMaterials, false);
-                meshes.Add(D("id", "mesh-" + serial++, "mesh", index, "visible", true, "collision", false));
+                string id="mesh-"+serial++;
+                meshes.Add(D("id", id, "mesh", index, "visible", true, "collision", false));
+                authoring.Add(id,renderer.transform);
             }
             foreach (var collider in root.GetComponentsInChildren<Collider>())
             {
                 if (!collider.enabled) continue;
                 if (collider.isTrigger) throw new InvalidOperationException("Trigger colliders need a supported gameplay marker: " + collider.name);
                 string id = "collider-" + serial++;
+                authoring.Add(id,collider.transform,collider);
                 if (collider is MeshCollider mc)
                 {
                     if (mc.convex) throw new InvalidOperationException("Convex MeshColliders are unsupported; use primitive or static triangle collision: " + mc.name);
@@ -108,7 +112,9 @@ namespace Radbot.MapAuthoring.Editor
             {
                 if (!marker.enabled) continue;
                 if (marker.spawnTag.Length>128) throw new InvalidOperationException("Spawn tag exceeds 128 characters.");
-                markers.Add(D("id","start-"+serial++,"type","playerStart","spawnTag",marker.spawnTag,
+                string id="start-"+serial++;
+                authoring.Add(id,marker.transform);
+                markers.Add(D("id",id,"type","playerStart","spawnTag",marker.spawnTag,
                     "position",Position(root.transform.InverseTransformPoint(marker.transform.position)),
                     "rotation",Rotation(Quaternion.Inverse(root.transform.rotation)*marker.transform.rotation)));
             }
@@ -118,6 +124,8 @@ namespace Radbot.MapAuthoring.Editor
             if (bytes.Length>256*1024*1024) throw new InvalidOperationException("Prototype GLB limit is 256 MiB.");
             string hash; using (var sha=SHA1.Create()) hash=BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
             string json=Json(D("schemaVersion",1,"mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers));
+            json=json.Substring(0,json.Length-1)+",\"authoring\":"+authoring.Json()+"}";
+            if(Encoding.UTF8.GetByteCount(json)>8*1024*1024) throw new InvalidOperationException("Map manifest exceeds the runtime's 8 MiB limit.");
             return new PreparedMap(bytes,json,meshes.Count,colliders.Count,markers.Count,hash);
         }
 
