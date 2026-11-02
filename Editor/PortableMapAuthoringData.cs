@@ -34,6 +34,7 @@ namespace Radbot.MapAuthoring.Editor
             {
                 foreach(var t in root.GetComponentsInChildren<Transform>())
                 {
+                    if(PortablePreviewPlayer.IsPreview(t)) continue;
                     if(nodes.Count>=30000 || t.name.Length>1024) throw new InvalidOperationException("Authoring metadata supports up to 30,000 objects with names up to 1,024 characters.");
                     int depth=0; for(var parent=t; parent!=root; parent=parent.parent) if(++depth>128) throw new InvalidOperationException("Authoring hierarchy exceeds 128 levels.");
                     indices.Add(t,nodes.Count);

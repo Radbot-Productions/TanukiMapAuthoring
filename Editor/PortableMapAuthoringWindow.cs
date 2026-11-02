@@ -4,332 +4,341 @@ using System.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Object=UnityEngine.Object;
 
 namespace Radbot.MapAuthoring.Editor
 {
-    /// <summary>Native Unity authoring UI. Validation/export delegate to the production exporter.</summary>
     public sealed class PortableMapAuthoringWindow : EditorWindow
     {
+        enum Page { New, Samples, Open, Workshop, Export, Publish }
+        [SerializeField] Page page;
         [SerializeField] PortableMapRoot map;
-        [SerializeField] string exportFile="";
-        [SerializeField] string message="Choose a map root, or create a new map.";
+        [SerializeField] string message="",itemId="";
         [SerializeField] bool hasError;
-        [SerializeField] string workshopTitle="",previewImage="",workshopItem="";
-        [SerializeField] string uploadMapId="";
+        [SerializeField] bool createWorkshopItem;
+        [SerializeField] string updateItem="";
         Vector2 scroll;
-        bool busy;
-        [SerializeField] string openWorkshopItem="";
-        [SerializeField] bool forkImported=true;
-
+        bool busy,advanced;
         public PortableMapRoot SelectedMap => map;
         public string LastMessage => message;
         public bool HasError => hasError;
+        public string PublishingItem => createWorkshopItem?"":updateItem;
+        public void ReconcileWorkshopItem(PortableMapRoot root)
+        {if(map!=root)return;updateItem=root.workshopItemId;createWorkshopItem=string.IsNullOrEmpty(updateItem);Repaint();}
+        public void SetTab(int index) {page=index==0?Page.New:index==1?Page.Open:Page.Export;message="";Repaint();}
 
-        [MenuItem("Tanuki/Map Authoring",priority=0)]
-        static void OpenMenu() { Open(); }
+        [MenuItem("Tanuki/Map Editor",priority=0)] static void NewMenu() { Open(); }
+        [MenuItem("Tanuki/Components/Map Boundary",priority=20)]
+        [MenuItem("GameObject/Tanuki/Map Boundary",false,11)] static void BoundaryMenu() { ComponentCommand(true); }
+        [MenuItem("Tanuki/Components/Player Start",priority=21)]
+        [MenuItem("GameObject/Tanuki/Player Start",false,12)] static void StartMenu() { ComponentCommand(false); }
+        [MenuItem("GameObject/Tanuki/Map Root",false,10)] static void RootMenu() { CreateMapRoot(); }
 
         public static PortableMapAuthoringWindow Open()
         {
-            var window=GetWindow<PortableMapAuthoringWindow>("Tanuki Maps");
-            window.minSize=new Vector2(390,540);
-            window.Show(); return window;
+            var window=GetWindow<PortableMapAuthoringWindow>("Tanuki Map Editor");
+            window.minSize=new Vector2(360,260); window.Show(); return window;
         }
-
-        [MenuItem("GameObject/Tanuki/Map Root",false,10)]
-        static void CreateMapRootMenu() { CreateMapRoot(); }
-
+        static PortableMapAuthoringWindow Show(Page value)
+        {
+            var window=Open(); window.page=value; window.message=""; window.hasError=false; window.FollowSelection();
+            if(value==Page.Workshop) PortableMapWorkshopPublisher.BrowseSubscribed();
+            return window;
+        }
+        public static void ShowExport(PortableMapRoot root,bool workshop=false)
+        {var window=Show(workshop?Page.Publish:Page.Export);window.SelectMap(root);window.createWorkshopItem=!root || string.IsNullOrEmpty(root.workshopItemId);window.updateItem=root?root.workshopItemId:"";}
+        public static void ShowFileExport(PortableMapRoot root)
+        {var window=Show(Page.Export);window.SelectMap(root);window.AfterGUI(window.ExportFileDialog);}
+        static PortableMapRoot CurrentMap()
+        {
+            var selected=Selection.activeGameObject?Selection.activeGameObject.GetComponentInParent<PortableMapRoot>():null;
+            if(selected && !EditorUtility.IsPersistent(selected)) return selected;
+            var scene=SceneManager.GetActiveScene();
+            var roots=scene.IsValid()?scene.GetRootGameObjects().SelectMany(g=>g.GetComponentsInChildren<PortableMapRoot>(true)).ToArray():Array.Empty<PortableMapRoot>();
+            return roots.Length==1?roots[0]:null;
+        }
+        static void ComponentCommand(bool boundary)
+        {
+            var root=CurrentMap();
+            if(!root) {Show(Page.New).Fail("Select a map in the scene first.");return;}
+            if(boundary)
+            {
+                var existing=root.GetComponentsInChildren<PortableMapBoundary>(true);
+                if(existing.Length>0) {Selection.activeGameObject=existing[0].gameObject;return;}
+                CreateBoundary(root);
+            }
+            else AddPlayerStart(root);
+        }
+        public static PortableMapBoundary CreateBoundary(PortableMapRoot root)
+        {
+            var go=new GameObject("Map Boundary");go.transform.SetParent(root.transform,false);
+            go.transform.localPosition=Vector3.up*10;go.transform.localScale=new Vector3(60,20,60);
+            var result=go.AddComponent<PortableMapBoundary>();Undo.RegisterCreatedObjectUndo(go,"Create Map Boundary");Selection.activeGameObject=go;return result;
+        }
         public static PortableMapRoot CreateMapRoot()
         {
-            var go=new GameObject("Tanuki Map");
-            var root=go.AddComponent<PortableMapRoot>(); root.mapId=Guid.NewGuid().ToString("N");
-            Undo.RegisterCreatedObjectUndo(go,"Create Tanuki Map");
+            Undo.IncrementCurrentGroup();int group=Undo.GetCurrentGroup();
+            var go=new GameObject("New Map");var root=go.AddComponent<PortableMapRoot>();
+            root.mapId=Guid.NewGuid().ToString("N");root.mapName=go.name;
+            if(root.GetComponentsInChildren<PortableMapBoundary>(true).Length==0) CreateBoundary(root);
+            Undo.RegisterCreatedObjectUndo(go,"Create Tanuki Map");Undo.CollapseUndoOperations(group);
             Selection.activeGameObject=go;
-            var window=Open(); window.SelectMap(root);
+            foreach(var window in Resources.FindObjectsOfTypeAll<PortableMapAuthoringWindow>()) window.SelectMap(root);
             return root;
         }
-
-        [MenuItem("GameObject/Tanuki/Player Start",false,11)]
-        static void CreateSelectedStart()
+        public PortablePlayerStart AddPlayerStart() => AddPlayerStart(map);
+        public static PortablePlayerStart AddPlayerStart(PortableMapRoot root)
         {
-            var window=Open(); window.FollowSelection();
-            if (!window.map) { window.Fail("Choose a map root before adding a player start."); return; }
-            window.AddPlayerStart();
+            if(!root) throw new InvalidOperationException("Select a map first.");
+            var go=new GameObject("Player Start");go.transform.SetParent(root.transform,false);go.transform.localPosition=Vector3.up;
+            var start=go.AddComponent<PortablePlayerStart>();Undo.RegisterCreatedObjectUndo(go,"Add Player Start");Selection.activeGameObject=go;return start;
         }
-
-        public PortablePlayerStart AddPlayerStart()
-        {
-            if (!map) throw new InvalidOperationException("Choose a map root first.");
-            var go=new GameObject("Player Start");
-            go.transform.SetParent(map.transform,false); go.transform.localPosition=Vector3.up;
-            var start=go.AddComponent<PortablePlayerStart>();
-            Undo.RegisterCreatedObjectUndo(go,"Add Tanuki Player Start");
-            Selection.activeGameObject=go;
-            Changed("Player start added. Position its center above the floor and rotate its forward arrow.");
-            SceneView.RepaintAll(); return start;
-        }
-
         public void SelectMap(PortableMapRoot root)
         {
-            if (root && (EditorUtility.IsPersistent(root) || !root.gameObject.scene.IsValid()))
-                throw new InvalidOperationException("Select a map root in an open scene, not a prefab asset.");
-            map=root; Changed(root ? "Map selected. Validate before exporting." : "Choose a map root.");
-            workshopTitle=root ? root.name : "";
-            workshopItem=root ? PortableMapWorkshopPublisher.GetRememberedItem(root.mapId) : "";
+            if(root && (EditorUtility.IsPersistent(root)||!root.gameObject.scene.IsValid())) throw new InvalidOperationException("Select a map in an open scene.");
+            map=root;Repaint();
         }
-
-        void OnEnable()
+        void OnEnable() {Selection.selectionChanged+=FollowSelection;EditorApplication.hierarchyChanged+=Repaint;FollowSelection();if(map&&!EditorApplication.isPlayingOrWillChangePlaymode)PortablePreviewSetup.Ensure(map);}
+        void OnDisable() {Selection.selectionChanged-=FollowSelection;EditorApplication.hierarchyChanged-=Repaint;}
+        void FollowSelection() {var current=CurrentMap();if(current && current!=map) SelectMap(current);Repaint();}
+        void OnInspectorUpdate() {if(PortableMapWorkshopPublisher.IsPending) Repaint();}
+        void Changed(string text) {message=text;hasError=false;Repaint();}
+        void Fail(string text) {message=text;hasError=true;Repaint();}
+        void AfterGUI(Action action)
         {
-            Selection.selectionChanged+=FollowSelection;
-            Undo.undoRedoPerformed+=OnEdited;
-            EditorApplication.hierarchyChanged+=OnEdited;
-            EditorApplication.projectChanged+=OnEdited;
-            PortableMapWorkshopPublisher.Connect();
-            FollowSelection();
-        }
-        void OnDisable()
-        {
-            Selection.selectionChanged-=FollowSelection;
-            Undo.undoRedoPerformed-=OnEdited;
-            EditorApplication.hierarchyChanged-=OnEdited;
-            EditorApplication.projectChanged-=OnEdited;
-        }
-        void FollowSelection()
-        {
-            var root=Selection.activeGameObject ? Selection.activeGameObject.GetComponentInParent<PortableMapRoot>() : null;
-            if (root && root!=map && !EditorUtility.IsPersistent(root)) SelectMap(root);
+            if(busy||PortableMapWorkshopPublisher.IsPending) return;
+            // Scene replacement and asset imports can reset IMGUI's layout stack.
+            // Let the current GUI event unwind before changing editor state.
+            busy=true;
+            void Execute()
+            {
+                EditorApplication.update-=Execute;
+                if(!this)return;
+                busy=false;action();
+            }
+            EditorApplication.update+=Execute;
             Repaint();
         }
-        void OnEdited() { Repaint(); }
-        void Changed(string text) { message=text; hasError=false; Repaint(); }
-        void Fail(string text) { message=text; hasError=true; Repaint(); }
-
-        public bool ValidateMap()
+        bool Run(Action action)
         {
-            return Run("Validating map",()=>
-            {
-                var result=PortableMapExporter.Prepare(map);
-                Changed($"Validation passed: {result.MeshCount} mesh entries, {result.ColliderCount} primitive colliders, {result.PlayerStartCount} player starts. Export always validates the current scene again.");
-            });
-        }
-        public bool ExportMap(string destination)
-        {
-            return Run("Exporting map",()=>
-            {
-                // Always rebuild from current authored state; a previous validation is not export admission.
-                PortableMapExporter.ExportFile(map,destination);
-                exportFile=Path.GetFullPath(destination);
-                Changed("Exported " + exportFile);
-            });
-        }
-        public bool OpenMapFile(string filename,string folder,bool fork)
-        {
-            return Run("Opening map",()=>
-            {
-                SelectMap(PortableMapImporter.Import(filename,folder,fork));
-                Changed("Opened editable map in "+folder+"/Map.unity");
-            });
-        }
-        string ChooseImportFolder()
-        {
-            string path=EditorUtility.SaveFilePanelInProject("New folder for imported map","Imported Map","","Choose a new folder name. A scene and its assets will be created inside it.");
-            return path;
-        }
-        bool Run(string title,Action action)
-        {
-            if (busy) return false;
+            if(busy||PortableMapWorkshopPublisher.IsPending) return false;
             busy=true;
-            try
-            {
-                EditorUtility.DisplayProgressBar(title,"Converting geometry, materials, collision and markers...",.5f);
-                action(); return true;
-            }
-            catch(Exception error) { Fail(error.Message); return false; }
-            finally { busy=false; EditorUtility.ClearProgressBar(); Repaint(); }
+            try {action();return true;}catch(ExitGUIException) {throw;}catch(Exception error) {Fail(error.Message);return false;}
+            finally {busy=false;EditorUtility.ClearProgressBar();Repaint();}
         }
-
+        public bool ValidateMap() => Run(()=>{PortableMapExporter.Prepare(map);Changed("Map is ready to export.");});
+        public bool RepairMaterials() => Run(()=>Changed(PortableMapMaterials.Repair(map)));
+        public bool ExportMap(string filename) => Run(()=>
+        {
+            PortableMapExporter.ExportFile(map,filename);
+            Undo.RecordObject(map,"Remember Map Export");map.exportFile=Path.GetFullPath(filename);EditorUtility.SetDirty(map);
+            Changed("Exported "+map.exportFile);
+        });
+        public bool OpenMapFile(string filename,string folder,bool fork) => Run(()=>
+        {
+            var root=PortableMapImporter.Import(filename,folder,fork);
+            root.sourceFile=Path.GetFullPath(filename);root.mapName=Path.GetFileNameWithoutExtension(filename);
+            EditorUtility.SetDirty(root);SelectMap(root);Selection.activeGameObject=root.gameObject;
+        });
+        public bool ReplaceMapFile(string filename,string folder,bool fork=false) => Run(()=>
+        {
+            var root=PortableMapImporter.Import(filename,folder,fork,true);
+            root.sourceFile=Path.GetFullPath(filename);root.mapName=Path.GetFileNameWithoutExtension(filename);
+            PortablePreviewSetup.Ensure(root);SelectMap(root);Selection.activeGameObject=root.gameObject;EditorUtility.SetDirty(root);
+        });
+        public static string ImportFolder(string name)
+        {
+            if(!AssetDatabase.IsValidFolder("Assets/TanukiMaps")) AssetDatabase.CreateFolder("Assets","TanukiMaps");
+            string safe=string.Concat((name??"Map").Select(c=>char.IsLetterOrDigit(c)||c==' '||c=='-'||c=='_'?c:'_')).Trim();
+            return AssetDatabase.GenerateUniqueAssetPath("Assets/TanukiMaps/"+(safe.Length>0?safe:"Map"));
+        }
+        public bool CreateEmptyMap() => Run(()=>
+        {
+            PortableMapMaterials.CreatePresets();
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);var root=CreateMapRoot();
+            var boundary=root.GetComponentInChildren<PortableMapBoundary>();boundary.transform.localPosition=Vector3.up*4;boundary.transform.localScale=new Vector3(20,8,20);
+            var floor=GameObject.CreatePrimitive(PrimitiveType.Cube);floor.name="Floor";floor.transform.SetParent(root.transform,false);floor.transform.localPosition=new Vector3(0,-.1f,0);floor.transform.localScale=new Vector3(20,.2f,20);
+            var material=AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath("c01982de45bc4e16bb81b76c58659841"));
+            if(!material) throw new InvalidOperationException("Reinstall the Tanuki toolkit: its default floor material is missing.");
+            if(UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline)
+            {
+                var shader=Shader.Find("Universal Render Pipeline/Lit");if(!shader)throw new InvalidOperationException("Use a Built-in or Universal Render Pipeline project.");
+                material=new Material(shader){name="Floor"};material.SetColor("_BaseColor",new Color(.5f,.55f,.6f));material.SetFloat("_Metallic",0);material.SetFloat("_Smoothness",.3f);material.DisableKeyword("_EMISSION");
+                if(!AssetDatabase.IsValidFolder("Assets/TanukiMaps"))AssetDatabase.CreateFolder("Assets","TanukiMaps");
+                if(!AssetDatabase.IsValidFolder("Assets/TanukiMaps/Materials"))AssetDatabase.CreateFolder("Assets/TanukiMaps","Materials");
+                AssetDatabase.CreateAsset(material,AssetDatabase.GenerateUniqueAssetPath("Assets/TanukiMaps/Materials/Floor.mat"));
+            }
+            floor.GetComponent<Renderer>().sharedMaterial=material;
+            for(int i=0;i<4;i++){var start=AddPlayerStart(root);start.transform.localPosition=new Vector3((i-1.5f)*2,1,0);}
+            PortablePreviewSetup.Ensure(root);SelectMap(root);Selection.activeGameObject=root.gameObject;
+        });
+        public bool StartFromSample(bool courtyard) => Run(()=>
+        {
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);
+            PortableMapRoot template;
+            if(courtyard) template=PortableCourtyardSample.OpenOrCreate();
+            else
+            {
+                const string path=PortableMapSample.ScenePath;
+                if(!AssetDatabase.LoadAssetAtPath<SceneAsset>(path)) PortableMapSample.Create();else EditorSceneManager.OpenScene(path);
+                template=CurrentMap();
+            }
+            if(!template) return;
+            string folder=ImportFolder(courtyard?"Courtyard":"Room");Directory.CreateDirectory(folder);AssetDatabase.Refresh();
+            if(!EditorSceneManager.SaveScene(template.gameObject.scene,folder+"/Map.unity")) throw new IOException("Could not create the map scene.");
+            template.mapId=Guid.NewGuid().ToString("N");template.mapName=courtyard?"Courtyard":"Room";
+            template.workshopItemId="";template.sourceFile="";template.exportFile="";
+            if(template.GetComponentsInChildren<PortableMapBoundary>(true).Length==0) CreateBoundary(template);
+            int count=template.GetComponentsInChildren<PortablePlayerStart>().Count(s=>s.enabled);
+            for(int i=count;i<4;i++) {var start=AddPlayerStart(template);start.transform.localPosition=new Vector3((i-1.5f)*2,1,-3);}
+            if(!EditorSceneManager.SaveScene(template.gameObject.scene)) throw new IOException("Could not save the new sample map.");
+            PortablePreviewSetup.Ensure(template);SelectMap(template);Selection.activeGameObject=template.gameObject;
+        });
+        void ExportFileDialog()
+        {
+            if(!map) {Fail("Select the map root in the scene.");return;}
+            string file=EditorUtility.SaveFilePanel("Export Map File",string.IsNullOrEmpty(map.exportFile)?"":Path.GetDirectoryName(map.exportFile),
+                string.IsNullOrEmpty(map.exportFile)?map.DisplayName:Path.GetFileNameWithoutExtension(map.exportFile),"tanukimap");
+            if(file.Length>0) ExportMap(file);
+        }
         void OnGUI()
         {
-            scroll=EditorGUILayout.BeginScrollView(scroll);
-            GUILayout.Label("Tanuki Map Authoring",EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("Author here. Export one .tanukimap file.",EditorStyles.wordWrappedLabel);
-            EditorGUILayout.Space();
-            using(new EditorGUI.DisabledScope(busy || EditorApplication.isPlayingOrWillChangePlaymode))
+            scroll=EditorGUILayout.BeginScrollView(scroll);EditorGUILayout.Space(8);
+            using(new EditorGUI.DisabledScope(busy||EditorApplication.isPlayingOrWillChangePlaymode||PortableMapWorkshopPublisher.IsPending))
             {
-                EditorGUILayout.LabelField("Open Map",EditorStyles.boldLabel);
-                forkImported=EditorGUILayout.Toggle(new GUIContent("Fork as New Map","Create a new map identity. Required for another author's Workshop map."),forkImported);
-                using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending))
+                int current=page==Page.New||page==Page.Samples?0:page==Page.Open||page==Page.Workshop?1:2;
+                int tab=GUILayout.Toolbar(current,new[]{"New","Open","Export"});
+                if(tab!=current) SetTab(tab);
+                EditorGUILayout.Space(10);
+                if(page==Page.New)
                 {
-                    if(GUILayout.Button("Open .tanukimap File"))
-                    {
-                        string file=EditorUtility.OpenFilePanel("Open Tanuki map","","tanukimap");
-                        if(file.Length>0) {string folder=ChooseImportFolder(); if(folder.Length>0) OpenMapFile(file,folder,forkImported);}
-                    }
-                    openWorkshopItem=EditorGUILayout.TextField("Workshop Item ID",openWorkshopItem);
-                    using(new EditorGUI.DisabledScope(!PortableMapWorkshopPublisher.CanUpload(out _)))
-                    {
-                        if(GUILayout.Button("Refresh Subscribed Workshop Maps"))
-                        {PortableMapWorkshopPublisher.BrowseSubscribed();}
-                        foreach(var item in PortableMapWorkshopPublisher.Items)
-                            if(GUILayout.Button(item.title+" ("+item.id+")")) openWorkshopItem=item.id;
-                        using(new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(openWorkshopItem)))
-                            if(GUILayout.Button("Download & Open Workshop Map"))
-                            {string folder=ChooseImportFolder(); if(folder.Length>0) PortableMapWorkshopPublisher.DownloadAndOpen(openWorkshopItem,folder,forkImported);}
-                    }
+                    Heading("New Map");if(Button("Create Empty Map")) AfterGUI(()=>CreateEmptyMap());if(Button("Start From Sample…")) page=Page.Samples;
                 }
-                EditorGUILayout.HelpBox("Opens a new additive scene and creates editable assets in a new folder. Original prefab links and scripts are not restored.",MessageType.None);
-                EditorGUILayout.Space();
-                EditorGUI.BeginChangeCheck();
-                var chosen=(PortableMapRoot)EditorGUILayout.ObjectField("Map Root",map,typeof(PortableMapRoot),true);
-                if(EditorGUI.EndChangeCheck()) { try { SelectMap(chosen); } catch(Exception e) { Fail(e.Message); } }
-                var roots=Resources.FindObjectsOfTypeAll<PortableMapRoot>().Where(r=>r && r.gameObject.scene.IsValid() && !EditorUtility.IsPersistent(r)).ToArray();
-                if(roots.Length>1 && GUILayout.Button("Choose Map in Open Scenes"))
+                else if(page==Page.Samples)
                 {
-                    var menu=new GenericMenu();
-                    foreach(var root in roots) { var item=root; menu.AddItem(new GUIContent(root.gameObject.scene.name+" / "+root.name),root==map,()=>SelectMap(item)); }
-                    menu.ShowAsContext();
+                    Heading("Start From Sample");if(Button("Courtyard")) AfterGUI(()=>StartFromSample(true));if(Button("Room")) AfterGUI(()=>StartFromSample(false));
                 }
-                using(new EditorGUILayout.HorizontalScope())
+                else if(page==Page.Open)
                 {
-                    if(GUILayout.Button("Create Map Root")) CreateMapRoot();
-                    if(GUILayout.Button("Open Sample Map")) OpenSample();
+                    Heading("Open Map");
+                    if(Button("Steam Workshop…")) {page=Page.Workshop;PortableMapWorkshopPublisher.BrowseSubscribed();}
+                    if(Button("Map File…")) AfterGUI(()=>{string file=EditorUtility.OpenFilePanel("Open Map File","","tanukimap");if(file.Length>0) ReplaceMapFile(file,ImportFolder(Path.GetFileNameWithoutExtension(file)));});
                 }
-                if(map)
+                else if(page==Page.Workshop)
                 {
-                    EditorGUILayout.Space();
-                    var serialized=new SerializedObject(map); serialized.Update();
-                    EditorGUI.BeginChangeCheck();
-                    EditorGUILayout.PropertyField(serialized.FindProperty("mapId"),new GUIContent("Map ID"));
-                    if(EditorGUI.EndChangeCheck()) { serialized.ApplyModifiedProperties(); workshopItem=PortableMapWorkshopPublisher.GetRememberedItem(map.mapId); Changed("Map identity changed. Keep the same ID for revisions of this map."); }
-                    else serialized.ApplyModifiedProperties();
-                    EditorGUILayout.HelpBox("Keep this ID for future revisions. A different map should have a different ID.",MessageType.Info);
-                    EditorGUILayout.LabelField("Player Starts",map.GetComponentsInChildren<PortablePlayerStart>().Count(s=>s.enabled).ToString());
-                    EditorGUILayout.LabelField("Visible Meshes",map.GetComponentsInChildren<MeshRenderer>().Count(r=>r.enabled).ToString());
-                    using(new EditorGUILayout.HorizontalScope())
+                    Heading("Open From Workshop");SteamAccount();
+                    var items=PortableMapWorkshopPublisher.Items;
+                    var openIds=new[]{""}.Concat(items.Select(i=>i.id)).ToList();
+                    var openLabels=new[]{"Choose a Workshop map"}.Concat(items.Select(i=>i.title+(i.owned?"  ·  Your map":""))).ToList();
+                    int previous=openIds.IndexOf(itemId);
+                    if(previous<0 && !string.IsNullOrEmpty(itemId)){openIds.Add(itemId);openLabels.Add("Selected Workshop item");previous=openIds.Count-1;}
+                    int next=WorkshopDropdown("Workshop Map",Mathf.Max(0,previous),openLabels.ToArray());
+                    if(next!=Mathf.Max(0,previous)) itemId=openIds[next];
+                    using(new EditorGUI.DisabledScope(string.IsNullOrEmpty(itemId))) if(Button("Open Map")) PortableMapWorkshopPublisher.DownloadAndOpenSource(itemId,ImportFolder(items.FirstOrDefault(i=>i.id==itemId)?.title??"Workshop Map"));
+                    advanced=EditorGUILayout.Foldout(advanced,"Open by Workshop ID",true);
+                    if(advanced) {itemId=EditorGUILayout.TextField("Workshop ID",itemId);if(Button("Open")) PortableMapWorkshopPublisher.DownloadAndOpenSource(itemId,ImportFolder("Workshop Map"));}
+                }
+                else if(page==Page.Export)
+                {
+                    Heading("Export Map");if(!map) EditorGUILayout.HelpBox("Select the map root in the scene.",MessageType.Warning);
+                    using(new EditorGUI.DisabledScope(!map))
                     {
-                        if(GUILayout.Button("Add Player Start")) AddPlayerStart();
-                        using(new EditorGUI.DisabledScope(!Selection.activeGameObject || !Selection.activeGameObject.transform.IsChildOf(map.transform)))
+                        if(Button("Steam Workshop…")) {page=Page.Publish;createWorkshopItem=string.IsNullOrEmpty(map.workshopItemId);updateItem=map.workshopItemId;PortableMapWorkshopPublisher.Connect();}
+                        if(Button("Map File…")) AfterGUI(ExportFileDialog);
+                        EditorGUILayout.Space(8);
+                        using(new EditorGUILayout.HorizontalScope())
                         {
-                            if(GUILayout.Button("Add Box Collider"))
-                            {
-                                if(Selection.activeGameObject.GetComponent<Collider>()) Fail("The selected object already has a collider. Edit its collider in the Inspector.");
-                                else { Undo.AddComponent<BoxCollider>(Selection.activeGameObject); Changed("Box collider added to the selected map object."); }
-                            }
+                            EditorGUILayout.LabelField("Materials",EditorStyles.miniLabel);
+                            if(GUILayout.Button("Repair",EditorStyles.miniButton,GUILayout.Width(70))) AfterGUI(()=>RepairMaterials());
                         }
                     }
-                    if(GUILayout.Button("Frame Map in Scene View") && SceneView.lastActiveSceneView)
-                    {
-                        Selection.activeGameObject=map.gameObject; SceneView.lastActiveSceneView.FrameSelected();
-                    }
                 }
-                EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Export",EditorStyles.boldLabel);
-                using(new EditorGUILayout.HorizontalScope())
+                else
                 {
-                    exportFile=EditorGUILayout.TextField("Map File",exportFile);
-                    if(GUILayout.Button("Browse",GUILayout.Width(65)))
+                    Heading("Steam Workshop");SteamAccount();
+                    if(map)
                     {
-                        string filename=ChooseExportFile();
-                        if(!string.IsNullOrEmpty(filename)) exportFile=filename;
-                    }
-                }
-                using(new EditorGUI.DisabledScope(!map))
-                using(new EditorGUILayout.HorizontalScope())
-                {
-                    if(GUILayout.Button("Validate Map")) ValidateMap();
-                    if(GUILayout.Button("Export .tanukimap"))
-                    {
-                        if(string.IsNullOrWhiteSpace(exportFile))
+                        var data=new SerializedObject(map);data.Update();
+                        EditorGUI.BeginChangeCheck();string title=EditorGUILayout.TextField("Title",map.DisplayName);
+                        if(EditorGUI.EndChangeCheck()) RenameMap(map,title);
+                        createWorkshopItem=EditorGUILayout.Popup("Publish",createWorkshopItem?1:0,new[]{"Update existing Workshop item","Create new Workshop item"})==1;
+                        if(!createWorkshopItem)
                         {
-                            string filename=ChooseExportFile();
-                            if(!string.IsNullOrEmpty(filename)) ExportMap(filename);
+                            var owned=PortableMapWorkshopPublisher.Items.Where(i=>i.owned).ToArray();
+                            var ids=new[]{""}.Concat(owned.Select(i=>i.id)).ToList();
+                            var labels=new[]{"Choose a Workshop item"}.Concat(owned.Select(i=>i.title)).ToList();
+                            int selected=ids.IndexOf(updateItem);
+                            if(selected<0 && !string.IsNullOrEmpty(updateItem)) {ids.Add(updateItem);labels.Add("Linked Workshop item");selected=ids.Count-1;}
+                            int chosen=WorkshopDropdown("Workshop Item",Mathf.Max(0,selected),labels.ToArray());
+                            if(chosen!=Mathf.Max(0,selected)) updateItem=ids[chosen];
+                            advanced=EditorGUILayout.Foldout(advanced,"Advanced",true);
+                            if(advanced) updateItem=EditorGUILayout.TextField("Item ID",updateItem);
                         }
-                        else ExportMap(exportFile);
+                        EditorGUILayout.PropertyField(data.FindProperty("previewImage"),new GUIContent("Preview PNG (optional)"));data.ApplyModifiedProperties();
+                        using(new EditorGUI.DisabledScope(!PortableMapWorkshopPublisher.CanUpload(out _)||(!createWorkshopItem&&string.IsNullOrWhiteSpace(updateItem))))
+                            if(Button(createWorkshopItem?"Create Workshop Item":"Update Workshop Item")) AfterGUI(()=>PortableMapWorkshopPublisher.ExportAndUpload(map,map.DisplayName,PreviewPath(map),PublishingItem));
                     }
+                    else EditorGUILayout.HelpBox("Select the map root in the scene.",MessageType.Warning);
                 }
-                if(!string.IsNullOrEmpty(exportFile) && File.Exists(exportFile) && GUILayout.Button("Show Exported File"))
-                    EditorUtility.RevealInFinder(exportFile);
-                EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Steam Workshop",EditorStyles.boldLabel);
-                EditorGUILayout.HelpBox("Developer-only testing. Run Steam and sign in with Tanuki access. Export & Upload publishes the current scene directly from Unity.",MessageType.Info);
-                using(new EditorGUILayout.HorizontalScope())
-                {
-                    EditorGUILayout.LabelField(PortableMapWorkshopPublisher.Account);
-                    using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending))
-                        if(GUILayout.Button("Connect Steam",GUILayout.Width(110))) PortableMapWorkshopPublisher.Connect();
-                }
-                using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending))
-                {
-                    workshopTitle=EditorGUILayout.TextField("Title",workshopTitle);
-                    EditorGUILayout.LabelField("Leave the preview blank to generate a framed map view.",EditorStyles.wordWrappedMiniLabel);
-                    using(new EditorGUILayout.HorizontalScope())
-                    {
-                        previewImage=EditorGUILayout.TextField("Preview PNG",previewImage);
-                        if(GUILayout.Button("Browse",GUILayout.Width(65)))
-                        { var image=EditorUtility.OpenFilePanel("Workshop preview PNG",Path.GetDirectoryName(previewImage)??"","png"); if(image.Length>0) previewImage=image; }
-                    }
-                    workshopItem=EditorGUILayout.TextField(new GUIContent("Item ID","Leave empty for a new item. Keep the returned ID to update that item."),workshopItem);
-                    string remembered=map ? PortableMapWorkshopPublisher.GetRememberedItem(map.mapId) : "";
-                    if(remembered.Length>0 && workshopItem!=remembered && GUILayout.Button("Use Last Uploaded Item ("+remembered+")")) workshopItem=remembered;
-                    using(new EditorGUI.DisabledScope(!map || !PortableMapWorkshopPublisher.CanUpload(out _)))
-                        if(GUILayout.Button(string.IsNullOrEmpty(workshopItem)?"Export & Upload to Workshop":"Export & Update Workshop Item"))
-                        {
-                            if(PortableMapWorkshopPublisher.ExportAndUpload(map,workshopTitle,previewImage,workshopItem)) uploadMapId=map.mapId;
-                        }
-                }
-                if(!string.IsNullOrEmpty(PortableMapWorkshopPublisher.Status))
-                    EditorGUILayout.HelpBox(PortableMapWorkshopPublisher.Status,PortableMapWorkshopPublisher.HasError ? MessageType.Error : MessageType.Info);
             }
-            EditorGUILayout.Space();
-            EditorGUILayout.HelpBox(message,hasError ? MessageType.Error : MessageType.Info);
-            EditorGUILayout.HelpBox("Prototype: static meshes, basic textured materials, primitive/static mesh collision and player starts. Workshop publishing uses your logged-in Steam account. Gameplay scripting and embedded Tanuki gameplay preview are not implemented.",MessageType.None);
+            if(!string.IsNullOrEmpty(message)) EditorGUILayout.HelpBox(message,hasError?MessageType.Error:MessageType.Info);
+            if((page==Page.Workshop||page==Page.Publish)&&!string.IsNullOrEmpty(PortableMapWorkshopPublisher.Status)) EditorGUILayout.HelpBox(PortableMapWorkshopPublisher.Status,PortableMapWorkshopPublisher.HasError?MessageType.Error:MessageType.None);
             EditorGUILayout.EndScrollView();
+            NavigationFooter();
         }
-
-        void OnInspectorUpdate()
+        void NavigationFooter()
         {
-            if(!PortableMapWorkshopPublisher.IsPending && !string.IsNullOrEmpty(uploadMapId))
+            if(page!=Page.Samples && page!=Page.Workshop && page!=Page.Publish)return;
+            GUILayout.Box(GUIContent.none,GUILayout.ExpandWidth(true),GUILayout.Height(1));
+            using(new EditorGUILayout.HorizontalScope())
+            using(new EditorGUI.DisabledScope(busy||EditorApplication.isPlayingOrWillChangePlaymode||PortableMapWorkshopPublisher.IsPending))
             {
-                if(map && map.mapId==uploadMapId)
-                {
-                    string item=PortableMapWorkshopPublisher.GetRememberedItem(uploadMapId);
-                    if(!string.IsNullOrEmpty(item)) workshopItem=item;
-                }
-                uploadMapId=""; Repaint();
+                GUILayout.FlexibleSpace();
+                if(GUILayout.Button("← Back",EditorStyles.miniButton,GUILayout.Width(82),GUILayout.Height(24)))
+                {SetTab(page==Page.Samples?0:page==Page.Workshop?1:2);scroll=Vector2.zero;}
             }
-            if(PortableMapWorkshopPublisher.IsPending) Repaint();
+            EditorGUILayout.Space(6);
         }
-
-        public static void OpenSampleAndShow()
+        public static string PreviewPath(PortableMapRoot root) {return root.previewImage?Path.GetFullPath(AssetDatabase.GetAssetPath(root.previewImage)):"";}
+        public static void RenameMap(PortableMapRoot root,string name)
+        {Undo.RecordObject(root.gameObject,"Rename Map");root.mapName=name;EditorUtility.SetDirty(root.gameObject);EditorSceneManager.MarkSceneDirty(root.gameObject.scene);}
+        static bool Button(string label) {return GUILayout.Button(label,GUILayout.MinHeight(30));}
+        static void Heading(string label) {EditorGUILayout.LabelField(label,EditorStyles.boldLabel);EditorGUILayout.Space(8);}
+        static int WorkshopDropdown(string label,int selected,string[] choices)
         {
-            var window=Open(); window.OpenSample();
-            if(SceneView.lastActiveSceneView) SceneView.lastActiveSceneView.FrameSelected();
-        }
-        string ChooseExportFile()
-        {
-            return EditorUtility.SaveFilePanel("Export Tanuki map",string.IsNullOrEmpty(exportFile) ? "" : Path.GetDirectoryName(exportFile),
-                string.IsNullOrEmpty(exportFile) ? (map ? map.mapId : "TanukiMap") : Path.GetFileNameWithoutExtension(exportFile),"tanukimap");
-        }
-        void OpenSample()
-        {
-            try
+            using(new EditorGUILayout.HorizontalScope())
             {
-                var root=PortableCourtyardSample.OpenOrCreate();
-                if(!root) return;
-                SelectMap(root);
-                FollowSelection();
+                int next=EditorGUILayout.Popup(label,selected,choices);
+                if(GUILayout.Button(new GUIContent("Refresh","Refresh your Workshop maps"),EditorStyles.miniButton,GUILayout.Width(60))) PortableMapWorkshopPublisher.BrowseSubscribed();
+                return next;
             }
-            catch(Exception error) { Fail(error.Message); }
         }
+        static void SteamAccount()
+        {
+            using(new EditorGUILayout.HorizontalScope()) {EditorGUILayout.LabelField(PortableMapWorkshopPublisher.Account);if(GUILayout.Button("Connect",GUILayout.Width(70))) PortableMapWorkshopPublisher.Connect();}
+        }
+        public static void OpenSampleAndShow() {var root=PortableCourtyardSample.OpenOrCreate();if(root) Selection.activeGameObject=root.gameObject;}
     }
-
     [CustomEditor(typeof(PortableMapRoot))]
     public sealed class PortableMapRootInspector : UnityEditor.Editor
     {
         public override void OnInspectorGUI()
         {
-            DrawDefaultInspector();
-            if(GUILayout.Button("Open Tanuki Map Authoring")) PortableMapAuthoringWindow.Open().SelectMap((PortableMapRoot)target);
+            var root=(PortableMapRoot)target;serializedObject.Update();
+            EditorGUI.BeginChangeCheck();string name=EditorGUILayout.TextField("Map Name",root.DisplayName);
+            if(EditorGUI.EndChangeCheck()) PortableMapAuthoringWindow.RenameMap(root,name);
+            using(new EditorGUI.DisabledScope(true)) EditorGUILayout.PropertyField(serializedObject.FindProperty("mapId"),new GUIContent("Map ID"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("previewImage"),new GUIContent("Preview PNG (optional)"));serializedObject.ApplyModifiedProperties();
+            EditorGUILayout.Space();
+            var outside=PortableMapExporter.GeometryOutsideMap(root);
+            if(outside.Length>0) EditorGUILayout.HelpBox("Move scene geometry under this map root before exporting: "+string.Join(", ",outside.Take(5).Select(go=>go.name)),MessageType.Warning);
+            using(new EditorGUI.DisabledScope(PortableMapWorkshopPublisher.IsPending||EditorApplication.isPlayingOrWillChangePlaymode))
+            {
+                if(GUILayout.Button(string.IsNullOrEmpty(root.workshopItemId)?"Publish to Workshop…":"Update Workshop…",GUILayout.MinHeight(30))) PortableMapAuthoringWindow.ShowExport(root,true);
+                if(GUILayout.Button("Export Map File…")) PortableMapAuthoringWindow.ShowFileExport(root);
+            }
+            EditorGUILayout.Space();if(!string.IsNullOrEmpty(root.workshopItemId)) EditorGUILayout.LabelField("Workshop Item",root.workshopItemId);
         }
     }
 }

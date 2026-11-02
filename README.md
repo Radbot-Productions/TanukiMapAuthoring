@@ -8,7 +8,13 @@ the Unreal runtime prototype. No Unreal Editor is needed for authoring.
 player starts, with a direct Workshop publishing frontend. Map scripting is not implemented, and
 this is not yet an OpenUPM release.
 
-![Courtyard sample rendered in Unity](Documentation~/courtyard.png)
+The working preview.8 source writes playable-map manifest version 2, including
+the required boundary. It needs an updated Tanuki runtime; older runtimes reject
+it instead of silently dropping the barrier. Legacy version-1 files remain editable.
+The updated Unreal map editor and gameplay runtime retain the boundary as well. The public preview.7 Git pin below
+is the previous release, not these unpublished UX changes.
+
+![Simple Courtyard blockout in Unity](Documentation~/courtyard.png)
 
 ## Install with Unity Package Manager
 
@@ -29,17 +35,23 @@ subset below. For local development, choose **Add package from disk** and select
 
 ## Author a map
 
+Use **Tanuki > Map Editor > New > Create Empty Map** for a plain floor, or
+**Start From Sample** for Room/Courtyard. Both include four player starts, a
+boundary, lighting and the Player Character automatically. Press Unity's Play
+button immediately to test the map. Opened files and Workshop maps receive the
+same local preview setup. The preview player and camera are excluded from exports.
+
 ### Open and extend an existing map
 
-Use **Open .tanukimap** in **Tanuki > Map Authoring**, or refresh the subscribed
-Workshop list and choose **Download & Open**. Import creates a new asset folder
-and additive scene containing durable meshes, textures, materials, collision and
-player starts. Save any untitled scene first. Existing imported assets are never
-overwritten.
+Use **Tanuki > Map Editor > Open > Steam Workshop** to choose a subscribed map, or
+**Map Editor > Open > Map File**. Import creates a new asset folder
+and scene containing durable meshes, textures, materials, collision and
+player starts. New/Open replaces the current scene without asking to save it;
+unsaved scene edits are discarded. Existing imported assets are never overwritten.
 
-**Fork** creates a new map identity and a new Workshop item on upload. Turn Fork
-off to continue your own item; its item ID is remembered for subsequent updates.
-Another author's item must be forked. Publishing uses the logged-in Steam client
+Your own Workshop map keeps its identity and publishing association. Another
+creator's map automatically becomes a new map when opened. An ID lookup is
+available under **Open by Workshop ID**. Publishing uses the logged-in Steam client
 and still requires developer access while Tanuki's Workshop is restricted.
 
 New exports include optional names, hierarchy, local transforms and collider
@@ -48,46 +60,51 @@ prefab links, scripts and arbitrary editor components cannot be recovered from a
 runtime map. Across Unreal/Unity, primitive colliders and starts may be flattened
 to preserve their runtime placement under nonuniformly scaled hierarchies.
 
+The samples are deliberately small blockouts made from ordinary primitives and
+flat colors. Room has a floor, three walls, three blocks and a ramp. Courtyard
+has a floor, scattered blocks, a cylinder, a low platform and a ramp. Each has
+one boundary and four starts. There are no decorative buildings, foliage or textures.
+New templates live under `Assets/TanukiBlockoutSamplesV2`; existing scenes are preserved.
+
 ### Create a new map
 
-1. Open **Tanuki > Map Authoring**.
-2. Choose **Open Sample Map**, or **Create Map Root**. The sample generator creates
-   a stylized courtyard, materials, meshes, preview lighting/camera and four
-   player starts in `Assets/TanukiCourtyard`. It opens an existing courtyard
-   without replacing it. The original basic room/prefab generator remains at
-   **Tanuki > Create Sample Map** for regression work.
+1. Open **Tanuki > Map Editor > New**.
+2. Choose **Create Empty Map**, or **Start From Sample** and select Courtyard or
+   Room. Starting from a sample creates a new scene and identity.
 3. Author geometry under the map root. Keep its world scale at one; its local
    frame is the export origin. Child mesh transforms are baked.
-4. Add Unity colliders to blocking surfaces. Visible geometry does not imply
-   collision. **Add Box Collider** works on a selected map object without one.
-5. Choose **Add Player Start**, or place the sample PlayerStart prefab. Position
+4. Add Unity colliders to blocking surfaces. Visible geometry does not imply collision.
+5. Use **Tanuki > Components > Player Start** to place at least four starts. Position
    its center above the floor and rotate its cyan forward arrow.
 6. Keep the same **Map ID** for revisions. New map roots get unique IDs.
-7. Choose **Validate Map**. This performs the same complete conversion as export,
-   including texture readback, without writing export files.
-8. Choose **Export .tanukimap**, pick a filename and save. Export validates the
-   current scene again and writes exactly one file. **Show Exported File** reveals it.
+7. Every new root includes one Map Boundary. Select it to choose Box or Cylinder;
+   use Unity's Transform tools to position, rotate and resize it. A cylinder needs
+   equal X/Z scale. Its transparent preview is not exported as scenery.
+8. Choose **Map Editor > Export**, then **Steam Workshop** or **Map File**.
+   Both validate the current scene automatically. Export requires static geometry,
+   exactly one active boundary and at least four active Player Starts.
 
-The panel reports errors and supports corrected retries. Root/player-start
-creation and collider additions support Undo. Components are also available
+The map root Inspector owns the map name, stable ID, optional preview image and
+export shortcuts. The dialogs report errors and support corrected retries.
+Components support Undo and are also available
 under **GameObject > Tanuki** and **Add Component > Tanuki**.
 
 ## Export directly to Steam Workshop
 
-The **Steam Workshop** section in **Tanuki > Map Authoring** publishes the current
+**Tanuki > Export Map > Steam Workshop** publishes the current
 scene without a separate manual file export. Windows is supported by this prototype.
 
 1. Run Steam, signed into a developer account authorized for Tanuki.
-2. The panel displays the connected Steam account. Use **Connect Steam** to reconnect
+2. The panel displays the connected Steam account. Use **Connect** to reconnect
    after starting Steam or signing in. Publishing does not require the game executable.
-3. Enter a title. Leave **Preview PNG** empty to generate a framed map overview,
+3. The title defaults to the map name. Leave **Preview PNG** empty to generate a framed map overview,
    or choose your own PNG smaller than 1 MiB. The generated view uses the Scene
    view's orientation and fits all map geometry; other scene objects/scripts are excluded.
-4. Leave **Item ID** empty to create a map, then choose **Export & Upload to Workshop**.
+4. Choose **Publish** for a new map or **Update Workshop** for your existing map.
    The panel exports a fresh `.tanukimap` and publishes directly through the running
    Steam client, showing pending state and the final result. Credentials stay in Steam.
-5. The returned item ID is remembered per Unity project and Map ID. Choose
-   **Use Last Uploaded Item** and **Export & Update Workshop Item** for revisions.
+5. The item ID is assigned automatically and remembered on the map root and in
+   reload-recovery state. Save the Unity scene to retain its publishing association.
    A failed/uncertain submission can still have created an item; retain its ID and
    inspect the job log before creating another item.
 
@@ -167,3 +184,24 @@ MIT. See [LICENSE.md](LICENSE.md). This repository contains only the Unity
 kit; it does not include Tanuki game source, game assets or the Unreal runtime.
 Steamworks.NET source retains its MIT notice; the Steam API DLL is Valve's
 redistributable and is not relicensed as Tanuki code.
+
+### Preview movement
+
+New/Open adds a separate **Player Character** object. Select Third Person or
+Free Camera in its Inspector, or press F during Play. WASD moves; Space jumps (hold to glide);
+Shift runs or releases climbing. Free Camera uses Q/E vertically and Shift to
+fly faster. Hold right mouse to capture the cursor; Escape releases it.
+
+The upright proxy uses the basic Tanuki capsule (42 cm wide, 60 cm tall).
+Its normal Tanuki speed profile is 2.7 m/s, or 4.5 m/s with Shift, with
+acceleration and reduced air control. A 7 m/s jump impulse and 9.8 m/s² gravity
+give about 2.5 m of jump height. Hold Space airborne for 0.2 seconds to glide
+when at least 1 m above ground; release to resume falling. Glide approaches
+1.5 m/s descent with up to 10 m/s steering. The profile follows authored OWL
+defaults, GAS attributes and the normal Tanuki role multiplier; it does not
+simulate role changes or temporary gameplay effects.
+Static-map climbing supports attachment, idle retention, tangent movement,
+corner following and top-out. It approximates object-form movement, without
+wall jumps or sculpted-body collision. Use Unreal for final traversal checks.
+The helper and all descendants are excluded from exports and thumbnails.
+Unity's Input Manager must be enabled (Legacy or Both).

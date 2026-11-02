@@ -24,11 +24,13 @@ namespace Radbot.MapAuthoring.Editor
             public Primitive[] colliders;
             public Marker[] markers;
             public PortableMapAuthoringData authoring;
+            public Boundary boundary;
         }
         [Serializable] public sealed class Entry {public string id; public int mesh; public bool visible,collision;}
         [Serializable] public sealed class Primitive {public string id,type; public float[] position,rotation,size; public float radius,halfHeight;}
         [Serializable] public sealed class Marker {public string id,type,spawnTag; public float[] position,rotation;}
-        [Serializable] sealed class Document {public GMesh[] meshes; public Accessor[] accessors; public View[] bufferViews; public GMaterial[] materials; public Image[] images; public Texture[] textures; public Buffer[] buffers;}
+        [Serializable] public sealed class Boundary {public string id,shape; public float[] position,rotation,size;}
+        [Serializable] sealed class Document {public GMesh[] meshes; public Accessor[] accessors; public View[] bufferViews; public GMaterial[] materials; public Image[] images; public Texture[] textures; public Sampler[] samplers;public Buffer[] buffers;public string[] extensionsUsed;}
         [Serializable] sealed class Buffer {public int byteLength; public string uri;}
         [Serializable] sealed class GMesh {public string name; public Part[] primitives;}
         [Serializable] sealed class Part {public Attributes attributes; public int indices,material=-1,mode=4;}
@@ -36,10 +38,15 @@ namespace Radbot.MapAuthoring.Editor
         [Serializable] sealed class Accessor {public int bufferView,byteOffset,componentType,count; public string type; public bool normalized;}
         [Serializable] sealed class View {public int buffer,byteOffset,byteLength,byteStride;}
         [Serializable] sealed class Image {public int bufferView; public string mimeType,uri;}
-        [Serializable] sealed class Texture {public int source;}
-        [Serializable] sealed class GMaterial {public string name,alphaMode; public float alphaCutoff=.5f; public Pbr pbrMetallicRoughness;}
-        [Serializable] sealed class Pbr {public float[] baseColorFactor; public float metallicFactor=1,roughnessFactor=1; public TextureRef baseColorTexture;}
-        [Serializable] sealed class TextureRef {public int index;}
+        [Serializable] sealed class Texture {public int source,sampler=-1;}
+        [Serializable] sealed class Sampler {public int wrapS=10497,wrapT=10497,magFilter=9729,minFilter=9729;}
+        [Serializable] sealed class GMaterial {public string name,alphaMode; public float alphaCutoff=.5f;public bool doubleSided;public float[] emissiveFactor; public Pbr pbrMetallicRoughness;public TextureRef normalTexture,occlusionTexture,emissiveTexture;public MaterialExtensions extensions;}
+        [Serializable] sealed class Pbr {public float[] baseColorFactor=new[]{1f,1f,1f,1f}; public float metallicFactor=1,roughnessFactor=1; public TextureRef baseColorTexture,metallicRoughnessTexture;}
+        [Serializable] sealed class TextureRef {public int index,texCoord;public float scale=1,strength=1;public TextureExtensions extensions;}
+        [Serializable] sealed class TextureExtensions {public TextureTransform KHR_texture_transform;}
+        [Serializable] sealed class TextureTransform {public float[] offset=new[]{0f,0f},scale=new[]{1f,1f};public float rotation;public int texCoord;}
+        [Serializable] sealed class MaterialExtensions {public EmissionStrength KHR_materials_emissive_strength;}
+        [Serializable] sealed class EmissionStrength {public float emissiveStrength=1;}
         sealed class Package {public Manifest manifest; public Document doc; public byte[] binary;}
         static void Require(bool condition,string reason) {if(!condition) throw new InvalidDataException(reason);}
         static T At<T>(T[] a,int i) {Require(a!=null && i>=0 && i<a.Length,"Invalid map array reference."); return a[i];}
@@ -59,7 +66,15 @@ namespace Radbot.MapAuthoring.Editor
                 var manifestFields=PortableMapJson.Read(manifestJson);
                 var m=JsonUtility.FromJson<Manifest>(manifestJson);
                 if(m!=null && (!manifestFields.ContainsKey("authoring") || manifestFields["authoring"]==null)) m.authoring=null;
-                Require(m!=null && m.schemaVersion==1 && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
+                if(m!=null && (!manifestFields.ContainsKey("boundary") || manifestFields["boundary"]==null)) m.boundary=null;
+                if(m?.boundary!=null)
+                {
+                    Require(m.boundary.id=="boundary" && (m.boundary.shape=="box"||m.boundary.shape=="cylinder"),"Unsupported map boundary.");
+                    var size=V(m.boundary.size);V(m.boundary.position);Q(m.boundary.rotation);
+                    Require(size.x>0 && size.y>0 && size.z>0 && (m.boundary.shape!="cylinder"||Mathf.Abs(size.x-size.z)<.001f),"Invalid map boundary dimensions.");
+                }
+                Require(m!=null && (m.schemaVersion==1||m.schemaVersion==2) && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
+                if(m.schemaVersion==2) Require(m.boundary!=null && m.markers!=null && m.markers.Length>=4,"A playable map requires a boundary and four player starts.");
                 Require(m.meshes!=null && m.meshes.Length>0 && m.meshes.Length<=10000 && m.colliders!=null && m.colliders.Length<=10000 && m.markers!=null && m.markers.Length>0 && m.markers.Length<=10000,"Invalid map entry counts.");
                 foreach(var c in m.colliders)
                 {
@@ -85,8 +100,22 @@ namespace Radbot.MapAuthoring.Editor
                         for(int i=0;i<doc.materials.Length;i++)
                         {
                             var fields=(Dictionary<string,object>)((List<object>)materialFields)[i];
-                            var pbr=(Dictionary<string,object>)fields["pbrMetallicRoughness"];
-                            if(!pbr.ContainsKey("baseColorTexture")) doc.materials[i].pbrMetallicRoughness.baseColorTexture=null;
+                            var material=doc.materials[i];
+                            var pbr=fields.TryGetValue("pbrMetallicRoughness",out var pbrValue)?(Dictionary<string,object>)pbrValue:new Dictionary<string,object>();
+                            if(pbrValue==null)material.pbrMetallicRoughness=new Pbr();
+                            TextureRef Present(Dictionary<string,object> values,string key,TextureRef reference)
+                            {
+                                if(!values.TryGetValue(key,out var raw)||raw==null)return null;
+                                var data=(Dictionary<string,object>)raw;
+                                if(!data.TryGetValue("extensions",out var extensions)||extensions==null)reference.extensions=null;
+                                else if(!((Dictionary<string,object>)extensions).ContainsKey("KHR_texture_transform"))reference.extensions.KHR_texture_transform=null;
+                                return reference;
+                            }
+                            material.pbrMetallicRoughness.baseColorTexture=Present(pbr,"baseColorTexture",material.pbrMetallicRoughness.baseColorTexture);
+                            material.pbrMetallicRoughness.metallicRoughnessTexture=Present(pbr,"metallicRoughnessTexture",material.pbrMetallicRoughness.metallicRoughnessTexture);
+                            material.normalTexture=Present(fields,"normalTexture",material.normalTexture);
+                            material.occlusionTexture=Present(fields,"occlusionTexture",material.occlusionTexture);
+                            material.emissiveTexture=Present(fields,"emissiveTexture",material.emissiveTexture);
                         }
                     int size=b.ReadInt32(); Require(size>=0 && b.ReadUInt32()==0x004e4942 && b.BaseStream.Position+size==g,"Invalid GLB binary chunk.");
                     Require(doc!=null && doc.buffers!=null && doc.buffers.Length==1 && string.IsNullOrEmpty(doc.buffers[0].uri) && doc.buffers[0].byteLength<=size,"External or invalid GLB buffer.");
@@ -97,10 +126,10 @@ namespace Radbot.MapAuthoring.Editor
         public static Manifest Inspect(string filename) => Read(filename).manifest;
         public static string FileHash(string filename) {using(var s=SHA1.Create()) using(var f=File.OpenRead(filename)) return BitConverter.ToString(s.ComputeHash(f)).Replace("-","");}
 
-        public static PortableMapRoot Import(string filename,string assetFolder,bool fork=false)
+        public static PortableMapRoot Import(string filename,string assetFolder,bool fork=false,bool replaceCurrent=false)
         {
             if(EditorApplication.isPlayingOrWillChangePlaymode) throw new InvalidOperationException("Import maps from Edit mode.");
-            for(int i=0;i<SceneManager.sceneCount;i++)
+            for(int i=0;!replaceCurrent && i<SceneManager.sceneCount;i++)
                 if(string.IsNullOrEmpty(SceneManager.GetSceneAt(i).path))
                     throw new InvalidOperationException("Save your untitled scene before opening a map. Unity cannot add a scene alongside an untitled scene; your current work has been retained.");
             var package=Read(filename);
@@ -112,18 +141,19 @@ namespace Radbot.MapAuthoring.Editor
             try
             {
                 Require(AssetDatabase.CreateFolder(Path.GetDirectoryName(assetFolder).Replace('\\','/'),Path.GetFileName(assetFolder)).Length>0,"Cannot create asset folder."); ownsFolder=true;
-                scene=EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Additive);
+                scene=EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,replaceCurrent?NewSceneMode.Single:NewSceneMode.Additive);
                 var root=Build(package,scene,assetFolder,fork);
+                PortablePreviewSetup.Ensure(root);
                 // Validate through the actual exporter before committing the generated scene.
-                PortableMapExporter.Prepare(root);
+                PortableMapExporter.Prepare(root,false);
                 Require(EditorSceneManager.SaveScene(scene,assetFolder+"/Map.unity"),"Cannot save imported scene.");
                 SceneManager.SetActiveScene(scene); Selection.activeGameObject=root.gameObject;
                 return root;
             }
             catch
             {
-                if(scene.IsValid()) EditorSceneManager.CloseScene(scene,true);
-                if(previous.IsValid()) SceneManager.SetActiveScene(previous);
+                if(scene.IsValid()) {if(replaceCurrent) EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);else EditorSceneManager.CloseScene(scene,true);}
+                if(previous.IsValid() && previous.isLoaded) SceneManager.SetActiveScene(previous);
                 if(ownsFolder) AssetDatabase.DeleteAsset(assetFolder);
                 throw;
             }
@@ -133,6 +163,8 @@ namespace Radbot.MapAuthoring.Editor
             var m=p.manifest;
             var rootObject=new GameObject("Imported Tanuki Map"); SceneManager.MoveGameObjectToScene(rootObject,scene);
             var root=rootObject.AddComponent<PortableMapRoot>(); root.mapId=fork ? Guid.NewGuid().ToString("N") : m.mapId;
+            foreach(var initial in root.GetComponentsInChildren<PortableMapBoundary>(true)) Object.DestroyImmediate(initial.gameObject);
+            root.mapName=Path.GetFileName(folder);
             var nodes=new List<Transform>(); var bindings=new Dictionary<string,PortableMapAuthoringData.Binding>();
             if(m.authoring!=null)
             {
@@ -146,7 +178,7 @@ namespace Radbot.MapAuthoring.Editor
                     t.name=n.name; t.localPosition=i==0 ? Vector3.zero : n.position; t.localRotation=i==0 ? Quaternion.identity : n.rotation.normalized; t.localScale=i==0 ? Vector3.one : n.scale; nodes.Add(t);
                 }
                 foreach(var b in a.bindings) {Require(b!=null && b.id!=null && !bindings.ContainsKey(b.id) && b.node>=0 && b.node<nodes.Count && Finite(b.center) && Finite(b.size) && Finite(b.radius) && Finite(b.height),"Invalid authoring binding."); bindings.Add(b.id,b);}
-                var ids=m.meshes.Select(e=>e.id).Concat(m.colliders.Select(e=>e.id)).Concat(m.markers.Select(e=>e.id)).ToArray();
+                var ids=m.meshes.Select(e=>e.id).Concat(m.colliders.Select(e=>e.id)).Concat(m.markers.Select(e=>e.id)).Concat(m.boundary!=null?new[]{m.boundary.id}:Array.Empty<string>()).ToArray();
                 Require(bindings.Count==ids.Length && ids.All(bindings.ContainsKey),"Authoring metadata does not match map content.");
             }
             Transform Owner(string id,string name)
@@ -195,6 +227,18 @@ namespace Radbot.MapAuthoring.Editor
                 Require(!t.GetComponent<PortablePlayerStart>(),"Duplicate player start component.");
                 t.gameObject.AddComponent<PortablePlayerStart>().spawnTag=marker.spawnTag;
             }
+            if(m.boundary!=null)
+            {
+                var b=m.boundary;var t=Owner(b.id,"Map Boundary");
+                if(!bindings.ContainsKey(b.id)) {t.localPosition=V(b.position);t.localRotation=Q(b.rotation);t.localScale=V(b.size);}
+                var frame=root.transform.worldToLocalMatrix*t.localToWorldMatrix;
+                Vector3 x=frame.GetColumn(0),y=frame.GetColumn(1),z=frame.GetColumn(2);
+                Require(Vector3.Distance(root.transform.InverseTransformPoint(t.position),V(b.position))<.001f &&
+                    Vector3.Distance(new Vector3(x.magnitude,y.magnitude,z.magnitude),V(b.size))<.001f &&
+                    Quaternion.Angle(Quaternion.Inverse(root.transform.rotation)*t.rotation,Q(b.rotation))<.01f,"Boundary authoring transform does not match its exported frame.");
+                t.gameObject.AddComponent<PortableMapBoundary>().shape=b.shape=="box"?PortableMapBoundary.BoundaryShape.Box:PortableMapBoundary.BoundaryShape.Cylinder;
+            }
+            else PortableMapAuthoringWindow.CreateBoundary(root);
             return root;
         }
         static byte[] Bytes(Package p,int index)
@@ -243,11 +287,12 @@ namespace Radbot.MapAuthoring.Editor
             var mesh=new Mesh {name=source.name??"Imported mesh",indexFormat=IndexFormat.UInt32}; mesh.SetVertices(vertices); mesh.subMeshCount=triangles.Count;
             for(int i=0;i<triangles.Count;i++) mesh.SetTriangles(triangles[i],i);
             if(hasNormals) mesh.SetNormals(normals); else mesh.RecalculateNormals();
-            if(hasUV) mesh.SetUVs(0,uvs); mesh.RecalculateBounds(); return mesh;
+            if(hasUV){mesh.SetUVs(0,uvs);mesh.RecalculateTangents();} mesh.RecalculateBounds(); return mesh;
         }
         static Material[] Materials(Package p,string folder)
         {
-            var textures=new List<Texture2D>();
+            Require((p.doc.extensionsUsed??Array.Empty<string>()).All(e=>e=="KHR_texture_transform"||e=="KHR_materials_emissive_strength"),"Map uses material or geometry extensions outside the Tanuki contract.");
+            var images=new List<byte[]>();
             foreach(var image in p.doc.images??Array.Empty<Image>())
             {
                 Require(string.IsNullOrEmpty(image.uri) && image.mimeType=="image/png","Only embedded PNG textures are supported.");
@@ -255,21 +300,74 @@ namespace Radbot.MapAuthoring.Editor
                 Require(bytes.Length>=24 && bytes[0]==137 && bytes[1]==80 && bytes[2]==78 && bytes[3]==71,"Invalid PNG.");
                 uint Dimension(int offset) => ((uint)bytes[offset]<<24)|((uint)bytes[offset+1]<<16)|((uint)bytes[offset+2]<<8)|bytes[offset+3];
                 Require(Dimension(16)>0 && Dimension(16)<=8192 && Dimension(20)>0 && Dimension(20)<=8192,"Texture exceeds supported dimensions.");
-                string path=folder+"/Texture-"+textures.Count+".png"; File.WriteAllBytes(path,bytes); AssetDatabase.ImportAsset(path);
-                var importer=(TextureImporter)AssetImporter.GetAtPath(path); importer.textureCompression=TextureImporterCompression.Uncompressed; importer.mipmapEnabled=false; importer.maxTextureSize=8192; importer.SaveAndReimport();
-                textures.Add(AssetDatabase.LoadAssetAtPath<Texture2D>(path));
+                images.Add(bytes);
+            }
+            var cache=new Dictionary<string,Texture2D>();
+            Texture2D Load(TextureRef reference,string kind="color",float metallic=1,float roughness=1)
+            {
+                Require(reference.texCoord==0,"Only UV0 is supported for portable materials.");
+                var entry=At(p.doc.textures,reference.index);var sampler=entry.sampler<0?new Sampler():At(p.doc.samplers,entry.sampler);
+                string key=reference.index+"-"+kind+"-"+metallic.ToString("R",System.Globalization.CultureInfo.InvariantCulture)+"-"+roughness.ToString("R",System.Globalization.CultureInfo.InvariantCulture);
+                if(cache.TryGetValue(key,out var existing))return existing;
+                byte[] bytes=At(images.ToArray(),entry.source);
+                if(kind=="metalRough"||kind=="occlusion")
+                {
+                    var copy=new Texture2D(2,2,TextureFormat.RGBA32,false,true);
+                    try
+                    {
+                        Require(copy.LoadImage(bytes),"Invalid material texture.");var pixels=copy.GetPixels();
+                        for(int i=0;i<pixels.Length;i++){var c=pixels[i];pixels[i]=kind=="metalRough"?new Color(c.b*metallic,0,0,1-c.g*roughness):new Color(c.r,c.r,c.r,1);}
+                        copy.SetPixels(pixels);copy.Apply();bytes=copy.EncodeToPNG();
+                    }
+                    finally{Object.DestroyImmediate(copy);}
+                }
+                string path=folder+"/Texture-"+cache.Count+".png";File.WriteAllBytes(path,bytes);AssetDatabase.ImportAsset(path);
+                var importer=(TextureImporter)AssetImporter.GetAtPath(path);
+                importer.textureType=kind=="normal"?TextureImporterType.NormalMap:TextureImporterType.Default;
+                importer.sRGBTexture=kind=="color";importer.textureCompression=TextureImporterCompression.Uncompressed;importer.mipmapEnabled=sampler.minFilter>=9984;importer.maxTextureSize=8192;
+                TextureWrapMode Wrap(int mode)=>mode==33071?TextureWrapMode.Clamp:mode==33648?TextureWrapMode.Mirror:TextureWrapMode.Repeat;
+                Require(new[]{10497,33071,33648}.Contains(sampler.wrapS)&&new[]{10497,33071,33648}.Contains(sampler.wrapT),"Unsupported texture wrap mode.");
+                importer.wrapModeU=Wrap(sampler.wrapS);importer.wrapModeV=Wrap(sampler.wrapT);importer.filterMode=sampler.magFilter==9728?FilterMode.Point:sampler.minFilter==9987?FilterMode.Trilinear:FilterMode.Bilinear;
+                importer.SaveAndReimport();var texture=AssetDatabase.LoadAssetAtPath<Texture2D>(path);cache.Add(key,texture);return texture;
             }
             var result=new List<Material>();
             foreach(var source in p.doc.materials??Array.Empty<GMaterial>())
             {
                 var pbr=source.pbrMetallicRoughness; Require(pbr!=null && pbr.baseColorFactor!=null && pbr.baseColorFactor.Length==4 && pbr.baseColorFactor.All(Finite) && Finite(pbr.metallicFactor) && Finite(pbr.roughnessFactor),"Invalid material.");
-                var material=new Material(Shader.Find(GraphicsSettings.currentRenderPipeline ? "Universal Render Pipeline/Lit" : "Standard")) {name=source.name??"Imported material"};
+                Require(!source.doubleSided,"Portable materials use back-face culling.");
+                float emissionStrength=source.extensions?.KHR_materials_emissive_strength?.emissiveStrength??1;
+                var emissive=source.emissiveFactor??new[]{0f,0f,0f};Require(emissive.Length==3&&emissive.All(v=>Finite(v)&&v>=0)&&Finite(emissionStrength)&&emissionStrength>=0,"Invalid emission.");
+                bool emission=emissive.Any(v=>v>0);
+                Require(string.IsNullOrEmpty(source.alphaMode)||new[]{"OPAQUE","MASK","BLEND"}.Contains(source.alphaMode),"Unsupported alpha mode.");
+                Require(!emission||string.IsNullOrEmpty(source.alphaMode)||source.alphaMode=="OPAQUE","Emission requires the opaque Emissive profile.");
+                var profile=source.alphaMode=="BLEND"?PortableMapMaterials.Profile.Transparent:source.alphaMode=="MASK"?PortableMapMaterials.Profile.Cutout:emission?PortableMapMaterials.Profile.Emissive:PortableMapMaterials.Profile.PBR;
+                var material=PortableMapMaterials.Create(profile);material.name=source.name??"Imported material";
                 var f=pbr.baseColorFactor; var color=new Color(f[0],f[1],f[2],f[3]).gamma;
                 material.SetColor(material.HasProperty("_BaseColor") ? "_BaseColor" : "_Color",color); material.SetFloat("_Metallic",pbr.metallicFactor);
                 material.SetFloat(material.HasProperty("_Smoothness") ? "_Smoothness" : "_Glossiness",1-pbr.roughnessFactor);
-                if(pbr.baseColorTexture!=null) material.mainTexture=At(textures.ToArray(),At(p.doc.textures,pbr.baseColorTexture.index).source);
-                Require(string.IsNullOrEmpty(source.alphaMode) || source.alphaMode=="OPAQUE" || source.alphaMode=="MASK","Unsupported material alpha mode.");
-                if(source.alphaMode=="MASK") {material.EnableKeyword("_ALPHATEST_ON"); material.SetFloat("_Cutoff",source.alphaCutoff); if(material.HasProperty("_Mode")) material.SetFloat("_Mode",1); if(material.HasProperty("_AlphaClip")) material.SetFloat("_AlphaClip",1); material.SetOverrideTag("RenderType","TransparentCutout"); material.renderQueue=2450;}
+                Vector2? commonScale=null,commonOffset=null;
+                void SetTexture(string property,TextureRef reference,string kind="color",float metallic=1,float roughness=1)
+                {
+                    if(reference==null)return;
+                    var transform=reference.extensions?.KHR_texture_transform;
+                    var scale=Vector2.one;var offset=Vector2.zero;
+                    if(transform!=null)
+                    {
+                        Require(transform.texCoord==0&&Mathf.Abs(transform.rotation)<.000001f&&transform.scale?.Length==2&&transform.offset?.Length==2&&transform.scale.All(Finite)&&transform.offset.All(Finite),"Only UV0 scale and offset are supported.");
+                        scale=new Vector2(transform.scale[0],transform.scale[1]);offset=new Vector2(transform.offset[0],1-scale.y-transform.offset[1]);
+                    }
+                    Require(!commonScale.HasValue||((commonScale.Value-scale).sqrMagnitude<.000001f&&(commonOffset.Value-offset).sqrMagnitude<.000001f),"Material textures must share UV0 tiling and offset: "+material.name);
+                    commonScale=scale;commonOffset=offset;material.mainTextureScale=scale;material.mainTextureOffset=offset;
+                    material.SetTexture(property,Load(reference,kind,metallic,roughness));
+                }
+                SetTexture(material.HasProperty("_BaseMap")?"_BaseMap":"_MainTex",pbr.baseColorTexture);
+                SetTexture("_MetallicGlossMap",pbr.metallicRoughnessTexture,"metalRough",pbr.metallicFactor,pbr.roughnessFactor);
+                if(pbr.metallicRoughnessTexture!=null){material.EnableKeyword("_METALLICGLOSSMAP");material.SetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_GlossMapScale",1);}
+                SetTexture("_BumpMap",source.normalTexture,"normal");if(source.normalTexture!=null){material.EnableKeyword("_NORMALMAP");material.SetFloat("_BumpScale",source.normalTexture.scale);}
+                SetTexture("_OcclusionMap",source.occlusionTexture,"occlusion");if(source.occlusionTexture!=null)material.SetFloat("_OcclusionStrength",source.occlusionTexture.strength);
+                SetTexture("_EmissionMap",source.emissiveTexture);if(emission)material.SetColor("_EmissionColor",new Color(emissive[0]*emissionStrength,emissive[1]*emissionStrength,emissive[2]*emissionStrength).gamma);
+                if(source.alphaMode=="MASK")material.SetFloat("_Cutoff",source.alphaCutoff);
+                PortableMapMaterials.Validate(material);
                 AssetDatabase.CreateAsset(material,folder+"/Material-"+result.Count+".mat"); result.Add(material);
             }
             return result.ToArray();

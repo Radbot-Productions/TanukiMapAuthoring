@@ -55,6 +55,7 @@ namespace Radbot.MapAuthoring.Editor
         }
         static GameObject CopyGeometry(Transform source,Transform parent,bool root)
         {
+            if(PortablePreviewPlayer.IsPreview(source)) return null;
             var copy=new GameObject(source.name) { hideFlags=HideFlags.HideAndDontSave };
             copy.transform.SetParent(parent,false);
             if(!root) { copy.transform.localPosition=source.localPosition; copy.transform.localRotation=source.localRotation; copy.transform.localScale=source.localScale; }

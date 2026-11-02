@@ -16,7 +16,6 @@ namespace Radbot.MapAuthoring.Editor
     /// <summary>Deliberately small static-scene GLB writer. No dependency on a Unity runtime or AssetBundle.</summary>
     public static class PortableMapExporter
     {
-        [MenuItem("Tanuki/Export Selected Map")]
         public static void ExportSelected()
         {
             var root = Selection.activeGameObject ? Selection.activeGameObject.GetComponentInParent<PortableMapRoot>() : null;
@@ -36,23 +35,57 @@ namespace Radbot.MapAuthoring.Editor
             Prepare(root).WriteFile(filename);
         }
 
+        public static GameObject[] GeometryOutsideMap(PortableMapRoot root)
+        {
+            if(!root || !root.gameObject.scene.IsValid()) return Array.Empty<GameObject>();
+            return root.gameObject.scene.GetRootGameObjects()
+                .SelectMany(go=>go.GetComponentsInChildren<Component>())
+                .Where(c=>c && (c is Renderer || c is Collider || c is Terrain))
+                .Where(c=>!c.transform.IsChildOf(root.transform) && !PortablePreviewPlayer.IsPreview(c.transform))
+                .Select(c=>c.gameObject).Distinct().ToArray();
+        }
+
         /// <summary>The editor's validation and export use the same complete conversion, including materials and collision.</summary>
-        public static PreparedMap Prepare(PortableMapRoot root)
+        public static PreparedMap Prepare(PortableMapRoot root,bool requirePlayable=true)
         {
             if (!root || string.IsNullOrWhiteSpace(root.mapId) || root.mapId.Length > 128) throw new InvalidOperationException("Set a map ID (1-128 characters).");
             if ((root.transform.lossyScale - Vector3.one).sqrMagnitude > .000001f) throw new InvalidOperationException("Map root must have unit scale.");
             if (root.GetComponentsInChildren<PortableMapRoot>(true).Length != 1) throw new InvalidOperationException("Nested map roots are unsupported.");
-            if (root.GetComponentsInChildren<Terrain>().Length != 0 || root.GetComponentsInChildren<SkinnedMeshRenderer>().Length != 0)
+            var outside=GeometryOutsideMap(root);
+            if(outside.Length>0) throw new InvalidOperationException("Move scene geometry under the map root '"+root.name+"' before exporting: "+string.Join(", ",outside.Take(5).Select(go=>go.name))+(outside.Length>5?", …":"")+". Objects outside the map root are not included in the map.");
+            var boundaries=root.GetComponentsInChildren<PortableMapBoundary>(true).Where(b=>!PortablePreviewPlayer.IsPreview(b.transform)).ToArray();
+            if(requirePlayable && (boundaries.Length!=1 || !boundaries[0].enabled || !boundaries[0].gameObject.activeInHierarchy))
+                throw new InvalidOperationException("A map needs exactly one active Map Boundary. Found "+boundaries.Length+".");
+            object boundaryRecord=null;
+            if (root.GetComponentsInChildren<Terrain>().Any(c=>!PortablePreviewPlayer.IsPreview(c.transform)) || root.GetComponentsInChildren<SkinnedMeshRenderer>().Any(c=>!PortablePreviewPlayer.IsPreview(c.transform)))
                 throw new InvalidOperationException("Prototype supports static MeshRenderers. Bake Terrain to meshes; remove skinned geometry.");
-            if (root.GetComponentsInChildren<Rigidbody>().Length != 0) throw new InvalidOperationException("Dynamic rigidbodies are unsupported in static map exports.");
-            if (root.GetComponentsInChildren<LODGroup>().Length != 0) throw new InvalidOperationException("Select/bake one mesh LOD and remove LODGroup before prototype export.");
+            if (root.GetComponentsInChildren<Rigidbody>().Any(c=>!PortablePreviewPlayer.IsPreview(c.transform))) throw new InvalidOperationException("Dynamic rigidbodies are unsupported in static map exports.");
+            if (root.GetComponentsInChildren<LODGroup>().Any(c=>!PortablePreviewPlayer.IsPreview(c.transform))) throw new InvalidOperationException("Select/bake one mesh LOD and remove LODGroup before prototype export.");
             var glb = new Glb(root.transform);
             var authoring = new PortableMapAuthoringData.Capture(root.transform);
+            if(boundaries.Length==1)
+            {
+                var boundary=boundaries[0];
+                var frame=root.transform.worldToLocalMatrix*boundary.transform.localToWorldMatrix;
+                Vector3 x=frame.GetColumn(0),y=frame.GetColumn(1),z=frame.GetColumn(2);
+                var size=new Vector3(x.magnitude,y.magnitude,z.magnitude);
+                if(!Enum.IsDefined(typeof(PortableMapBoundary.BoundaryShape),boundary.shape) || frame.determinant<=0 ||
+                    !Finite(size) || size.x<.01f || size.y<.01f || size.z<.01f ||
+                    Mathf.Abs(Vector3.Dot(x.normalized,y.normalized))>.0001f || Mathf.Abs(Vector3.Dot(y.normalized,z.normalized))>.0001f || Mathf.Abs(Vector3.Dot(x.normalized,z.normalized))>.0001f)
+                    throw new InvalidOperationException("Map Boundary needs positive dimensions and an unsheared Transform.");
+                if(boundary.shape==PortableMapBoundary.BoundaryShape.Cylinder && Mathf.Abs(size.x-size.z)>.001f)
+                    throw new InvalidOperationException("A cylinder boundary needs equal X and Z scale.");
+                var position=root.transform.InverseTransformPoint(boundary.transform.position);
+                if(!Finite(position)) throw new InvalidOperationException("Map Boundary position is invalid.");
+                boundaryRecord=D("id","boundary","shape",boundary.shape==PortableMapBoundary.BoundaryShape.Box?"box":"cylinder",
+                    "position",Position(position),"rotation",Rotation(Quaternion.Inverse(root.transform.rotation)*boundary.transform.rotation),"size",Position(size));
+                authoring.Add("boundary",boundary.transform);
+            }
             var meshes = new List<object>(); var colliders = new List<object>(); var markers = new List<object>();
             int serial = 0;
             foreach (var renderer in root.GetComponentsInChildren<MeshRenderer>())
             {
-                if (!renderer.enabled) continue;
+                if (!renderer.enabled || PortablePreviewPlayer.IsPreview(renderer.transform)) continue;
                 var filter = renderer.GetComponent<MeshFilter>();
                 if (!filter || !filter.sharedMesh) throw new InvalidOperationException("Missing MeshFilter: " + renderer.name);
                 if (renderer.sharedMaterials.Length != filter.sharedMesh.subMeshCount) throw new InvalidOperationException("Each submesh needs exactly one material; layered extra materials are unsupported: " + renderer.name);
@@ -63,7 +96,7 @@ namespace Radbot.MapAuthoring.Editor
             }
             foreach (var collider in root.GetComponentsInChildren<Collider>())
             {
-                if (!collider.enabled) continue;
+                if (!collider.enabled || PortablePreviewPlayer.IsPreview(collider.transform)) continue;
                 if (collider.isTrigger) throw new InvalidOperationException("Trigger colliders need a supported gameplay marker: " + collider.name);
                 string id = "collider-" + serial++;
                 authoring.Add(id,collider.transform,collider);
@@ -110,7 +143,7 @@ namespace Radbot.MapAuthoring.Editor
             }
             foreach (var marker in root.GetComponentsInChildren<PortablePlayerStart>())
             {
-                if (!marker.enabled) continue;
+                if (!marker.enabled || !marker.gameObject.activeInHierarchy || PortablePreviewPlayer.IsPreview(marker.transform)) continue;
                 if (marker.spawnTag.Length>128) throw new InvalidOperationException("Spawn tag exceeds 128 characters.");
                 string id="start-"+serial++;
                 authoring.Add(id,marker.transform);
@@ -118,12 +151,13 @@ namespace Radbot.MapAuthoring.Editor
                     "position",Position(root.transform.InverseTransformPoint(marker.transform.position)),
                     "rotation",Rotation(Quaternion.Inverse(root.transform.rotation)*marker.transform.rotation)));
             }
-            if (meshes.Count==0 || markers.Count==0) throw new InvalidOperationException("A map needs static geometry and at least one Portable Player Start.");
+            if (meshes.Count==0) throw new InvalidOperationException("Add static geometry before exporting.");
+            if(requirePlayable && markers.Count<4) throw new InvalidOperationException("A map needs at least four active Player Starts. Found "+markers.Count+".");
             if (meshes.Count>10000 || colliders.Count>10000 || markers.Count>10000) throw new InvalidOperationException("Prototype limit: 10,000 entries per category.");
             byte[] bytes=glb.Build();
             if (bytes.Length>256*1024*1024) throw new InvalidOperationException("Prototype GLB limit is 256 MiB.");
             string hash; using (var sha=SHA1.Create()) hash=BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
-            string json=Json(D("schemaVersion",1,"mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers));
+            string json=Json(D("schemaVersion",2,"mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers,"boundary",boundaryRecord));
             json=json.Substring(0,json.Length-1)+",\"authoring\":"+authoring.Json()+"}";
             if(Encoding.UTF8.GetByteCount(json)>8*1024*1024) throw new InvalidOperationException("Map manifest exceeds the runtime's 8 MiB limit.");
             return new PreparedMap(bytes,json,meshes.Count,colliders.Count,markers.Count,hash);
@@ -180,6 +214,7 @@ namespace Radbot.MapAuthoring.Editor
 
         // UE X=Unity Z, UE Y=Unity X, UE Z=Unity Y. Units in manifest are centimetres.
         static float[] Position(Vector3 v) => new[] {v.z*100f,v.x*100f,v.y*100f};
+        static bool Finite(Vector3 v) => !float.IsNaN(v.x)&&!float.IsNaN(v.y)&&!float.IsNaN(v.z)&&!float.IsInfinity(v.x)&&!float.IsInfinity(v.y)&&!float.IsInfinity(v.z)&&Mathf.Max(Mathf.Abs(v.x),Mathf.Abs(v.y),Mathf.Abs(v.z))<=100000;
         static float[] Rotation(Quaternion q) => new[] {q.z,q.x,q.y,q.w};
         internal static Dictionary<string,object> D(params object[] pairs)
         {
@@ -208,7 +243,8 @@ namespace Radbot.MapAuthoring.Editor
             readonly MemoryStream binary=new MemoryStream();
             readonly List<object> views=new List<object>(), accessors=new List<object>(), meshes=new List<object>(), nodes=new List<object>(), materials=new List<object>(), images=new List<object>(), textures=new List<object>();
             readonly Dictionary<Material,int> materialIds=new Dictionary<Material,int>();
-            readonly Dictionary<Texture,int> textureIds=new Dictionary<Texture,int>();
+            readonly Dictionary<(Texture source,string kind,float multiplier),int> textureIds=new Dictionary<(Texture,string,float),int>();
+            readonly List<object> samplers=new List<object>();
             public Glb(Transform root) { this.root=root; }
             int View(byte[] data)
             {
@@ -255,8 +291,8 @@ namespace Radbot.MapAuthoring.Editor
                     if(!collision)
                     {
                         if(sub>=assigned.Length || !assigned[sub]) throw new InvalidOperationException("Missing material: "+transform.name);
-                        if(assigned[sub].mainTexture && uv.Length!=vertices.Length) throw new InvalidOperationException("Textured mesh has no UVs: "+transform.name);
-                        p["material"]=Material(assigned[sub]);
+                        if(PortableMapMaterials.HasTextures(assigned[sub]) && uv.Length!=vertices.Length) throw new InvalidOperationException("Textured mesh has no UV0: "+transform.name+" / slot "+sub);
+                        try{p["material"]=Material(assigned[sub]);}catch(InvalidOperationException error){throw new InvalidOperationException(transform.name+" / material slot "+sub+": "+error.Message,error);}
                     }
                     primitives.Add(p);
                 }
@@ -266,43 +302,88 @@ namespace Radbot.MapAuthoring.Editor
             int Material(Material material)
             {
                 if(materialIds.TryGetValue(material,out int existing)) return existing;
-                string shader=material.shader.name;
-                if(shader!="Standard" && shader!="Universal Render Pipeline/Lit") throw new InvalidOperationException("Unsupported shader: "+shader+". Use Standard or URP/Lit.");
-                if(material.IsKeywordEnabled("_NORMALMAP") || material.IsKeywordEnabled("_METALLICGLOSSMAP") || material.IsKeywordEnabled("_PARALLAXMAP") || material.IsKeywordEnabled("_DETAIL_MULX2"))
-                    throw new InvalidOperationException("Prototype supports base-color textures and scalar metallic/smoothness; bake or remove extra maps: "+material.name);
+                PortableMapMaterials.Validate(material);
+                var profile=PortableMapMaterials.Classify(material);
                 string colorKey=material.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
                 Color color=material.GetColor(colorKey).linear;
                 var pbr=D("baseColorFactor",new[]{color.r,color.g,color.b,color.a},"metallicFactor",material.GetFloat("_Metallic"),
                     "roughnessFactor",1f-material.GetFloat(material.HasProperty("_Smoothness") ? "_Smoothness" : "_Glossiness"));
                 Texture texture=material.mainTexture;
+                object Reference(Texture value,string kind="color",float multiplier=1)
+                {
+                    var reference=D("index",Texture(value,kind,multiplier));
+                    Vector2 scale=material.mainTextureScale,offset=material.mainTextureOffset;
+                    if(scale!=Vector2.one || offset!=Vector2.zero)
+                        reference["extensions"]=D("KHR_texture_transform",D("scale",new[]{scale.x,scale.y},"offset",new[]{offset.x,1-scale.y-offset.y}));
+                    return reference;
+                }
                 if(texture)
                 {
-                    if(material.mainTextureOffset!=Vector2.zero || material.mainTextureScale!=Vector2.one) throw new InvalidOperationException("Bake texture tiling/offset into UVs: "+material.name);
-                    pbr["baseColorTexture"]=D("index",Texture(texture));
+                    pbr["baseColorTexture"]=Reference(texture);
                 }
-                var result=D("name",material.name,"pbrMetallicRoughness",pbr,"doubleSided",false);
-                bool cutout=material.IsKeywordEnabled("_ALPHATEST_ON");
-                bool transparent=shader=="Standard" ? material.GetFloat("_Mode")>=2 : material.GetFloat("_Surface")>0;
-                if(transparent) throw new InvalidOperationException("Translucent materials are unsupported in this prototype: "+material.name);
-                if(cutout) { result["alphaMode"]="MASK"; result["alphaCutoff"]=material.GetFloat("_Cutoff"); }
-                if(material.IsKeywordEnabled("_EMISSION")) throw new InvalidOperationException("Emissive materials are unsupported in this prototype: "+material.name);
+                var result=D("name",material.name,"pbrMetallicRoughness",pbr,"doubleSided",false,"extras",D("tanukiProfile",profile.ToString()));
+                if(profile==PortableMapMaterials.Profile.Cutout){result["alphaMode"]="MASK";result["alphaCutoff"]=material.GetFloat("_Cutoff");}
+                if(profile==PortableMapMaterials.Profile.Transparent)result["alphaMode"]="BLEND";
+                Texture Map(string key)=>material.HasProperty(key)?material.GetTexture(key):null;
+                if(material.IsKeywordEnabled("_METALLICGLOSSMAP")&&Map("_MetallicGlossMap"))
+                {
+                    float smooth=material.GetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_GlossMapScale");
+                    pbr["metallicRoughnessTexture"]=Reference(Map("_MetallicGlossMap"),"metalRough",smooth);pbr["metallicFactor"]=1f;pbr["roughnessFactor"]=1f;
+                }
+                if(material.IsKeywordEnabled("_NORMALMAP")&&Map("_BumpMap"))
+                {var normal=(Dictionary<string,object>)Reference(Map("_BumpMap"),"normal");normal["scale"]=material.GetFloat("_BumpScale");result["normalTexture"]=normal;}
+                if(Map("_OcclusionMap"))
+                {var ao=(Dictionary<string,object>)Reference(Map("_OcclusionMap"),"occlusion",material.GetFloat("_OcclusionStrength"));ao["strength"]=1f;result["occlusionTexture"]=ao;}
+                if(profile==PortableMapMaterials.Profile.Emissive)
+                {
+                    Color emission=material.GetColor("_EmissionColor").linear;float strength=Mathf.Max(1,emission.maxColorComponent);
+                    result["emissiveFactor"]=new[]{emission.r/strength,emission.g/strength,emission.b/strength};
+                    if(strength>1)result["extensions"]=D("KHR_materials_emissive_strength",D("emissiveStrength",strength));
+                    if(Map("_EmissionMap"))result["emissiveTexture"]=Reference(Map("_EmissionMap"));
+                }
                 int index=materials.Count; materials.Add(result); materialIds.Add(material,index); return index;
             }
-            int Texture(Texture source)
+            int Texture(Texture source,string kind="color",float multiplier=1)
             {
-                if(textureIds.TryGetValue(source,out int existing)) return existing;
+                var key=(source,kind,multiplier);
+                if(textureIds.TryGetValue(key,out int existing)) return existing;
                 if(source.dimension!=TextureDimension.Tex2D || source.width>8192 || source.height>8192) throw new InvalidOperationException("Only 2D textures up to 8192 pixels are supported.");
-                var rt=RenderTexture.GetTemporary(source.width,source.height,0,RenderTextureFormat.ARGB32,RenderTextureReadWrite.sRGB);
+                var rt=RenderTexture.GetTemporary(source.width,source.height,0,RenderTextureFormat.ARGB32,kind=="color"?RenderTextureReadWrite.sRGB:RenderTextureReadWrite.Linear);
                 RenderTexture previous=RenderTexture.active; Texture2D copy=null;
                 try
                 {
-                    Graphics.Blit(source,rt); RenderTexture.active=rt;
-                    copy=new Texture2D(source.width,source.height,TextureFormat.RGBA32,false,false);
-                    copy.ReadPixels(new Rect(0,0,source.width,source.height),0,0); copy.Apply();
+                    string path=AssetDatabase.GetAssetPath(source);
+                    copy=new Texture2D(source.width,source.height,TextureFormat.RGBA32,false,kind!="color");
+                    if(kind!="normal"&&File.Exists(path)&&new[]{".png",".jpg",".jpeg"}.Contains(Path.GetExtension(path).ToLowerInvariant()))
+                    {if(!copy.LoadImage(File.ReadAllBytes(path)))throw new InvalidOperationException("Cannot read texture: "+path);}
+                    else if(kind!="normal"&&source is Texture2D readable&&readable.isReadable)copy.SetPixels(readable.GetPixels());
+                    else
+                    {
+                        Material decoder=null;
+                        try
+                        {
+                            if(kind=="normal")decoder=new Material(Shader.Find("Hidden/Tanuki/ReadNormal"));
+                            if(decoder)Graphics.Blit(source,rt,decoder);else Graphics.Blit(source,rt);
+                            RenderTexture.active=rt;copy.ReadPixels(new Rect(0,0,source.width,source.height),0,0);
+                        }
+                        finally{if(decoder)Object.DestroyImmediate(decoder);}
+                    }
+                    if(copy.width>8192||copy.height>8192)throw new InvalidOperationException("Texture source exceeds 8192 pixels: "+source.name);
+                    if(kind=="metalRough"||kind=="occlusion")
+                    {
+                        var pixels=copy.GetPixels();
+                        for(int i=0;i<pixels.Length;i++){var c=pixels[i];float ao=1-multiplier*(1-c.g);pixels[i]=kind=="metalRough"?new Color(1,1-c.a*multiplier,c.r,1):new Color(ao,ao,ao,1);}
+                        copy.SetPixels(pixels);
+                    }
+                    copy.Apply();
                     images.Add(D("bufferView",View(copy.EncodeToPNG()),"mimeType","image/png"));
                 }
                 finally { RenderTexture.active=previous; RenderTexture.ReleaseTemporary(rt); if(copy) Object.DestroyImmediate(copy); }
-                int index=textures.Count; textures.Add(D("source",images.Count-1)); textureIds.Add(source,index); return index;
+                int Wrap(TextureWrapMode mode)=>mode==TextureWrapMode.Clamp?33071:mode==TextureWrapMode.Mirror?33648:10497;
+                bool mipmaps=source is Texture2D texture2D&&texture2D.mipmapCount>1;
+                int minFilter=source.filterMode==FilterMode.Point?(mipmaps?9984:9728):source.filterMode==FilterMode.Trilinear&&mipmaps?9987:mipmaps?9985:9729;
+                int index=textures.Count;samplers.Add(D("wrapS",Wrap(source.wrapModeU),"wrapT",Wrap(source.wrapModeV),"magFilter",source.filterMode==FilterMode.Point?9728:9729,"minFilter",minFilter));
+                textures.Add(D("source",images.Count-1,"sampler",samplers.Count-1));textureIds.Add(key,index);return index;
             }
             public byte[] Build()
             {
@@ -310,7 +391,8 @@ namespace Radbot.MapAuthoring.Editor
                     "scenes",new[]{D("nodes",Enumerable.Range(0,nodes.Count).ToArray())},"nodes",nodes,"meshes",meshes,
                     "accessors",accessors,"bufferViews",views,"buffers",new[]{D("byteLength",binary.Length)});
                 if(materials.Count>0) doc["materials"]=materials;
-                if(images.Count>0) { doc["images"]=images; doc["textures"]=textures; }
+                if(images.Count>0) { doc["images"]=images; doc["textures"]=textures;doc["samplers"]=samplers; }
+                doc["extensionsUsed"]=new[]{"KHR_texture_transform","KHR_materials_emissive_strength"};
                 byte[] json=Encoding.UTF8.GetBytes(Json(doc)); int jsonLength=(json.Length+3)&~3;
                 while(binary.Length%4!=0) binary.WriteByte(0);
                 using(var output=new MemoryStream())

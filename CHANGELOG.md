@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.0-preview.8 (unreleased)
+
+- Make New Empty Map and both samples ready to play, with ground, four starts, boundary, lighting and the preview player; keep preview helpers out of exports.
+- Keep Refresh beside the Workshop dropdown in both Open and Export.
+- Run scene creation and file operations after the GUI event to avoid layout errors.
+- Block export when scene geometry is outside the map root, naming the objects to move.
+- Accept Unity's plain default material when its emission is black.
+- Tune preview dimensions, speed, jump, acceleration and air control against Tanuki defaults; add held-Space glide with release and landing cleanup.
+- Match Unreal ground-friction steering and braking so movement turns and stops promptly.
+- Fix high-frame-rate movement stalls by allowing sub-millimeter CharacterController movement steps.
+- Separate Back navigation into a small fixed footer instead of mixing it with map choices.
+- Preserve existing Workshop item visibility when updating content.
+- Replace decorative samples with plain eight-object blockouts using flat colors; preserve previously created scenes.
+
+- Put New, Open and Export tabs in one Tanuki Map Editor; keep map settings on the scene root.
+- Replace the current scene without a save prompt when choosing New/Open, and keep the root name and map name synchronized.
+- Offer explicit Workshop update/create choices.
+- Add a Tanuki-sized third-person climbing proxy and switchable free camera for Unity playtesting.
+- Open subscribed Workshop maps without entering IDs; preserve your own publishing link and fork other creators' maps automatically.
+- Create Box/Cylinder boundaries automatically and require exactly one boundary and at least four player starts at export.
+- Validate automatically, remember file destinations, and default Workshop titles and previews.
+- Write playable-map manifest version 2 so older runtimes reject maps whose boundaries they cannot enforce. Continue opening legacy files for repair.
+
 ## 0.1.0-preview.7
 
 - Open a local `.tanukimap` as an editable scene with persistent mesh, material and texture assets.
