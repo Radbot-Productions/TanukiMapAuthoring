@@ -8,7 +8,7 @@ the Unreal runtime prototype. No Unreal Editor is needed for authoring.
 player starts, with a direct Workshop publishing frontend. Map scripting is not implemented, and
 this is not yet an OpenUPM release.
 
-The working preview.8 source writes playable-map manifest version 2, including
+The working preview.9 source writes playable-map manifest version 2, including
 the required boundary. It needs an updated Tanuki runtime; older runtimes reject
 it instead of silently dropping the barrier. Legacy version-1 files remain editable.
 The updated Unreal map editor and gameplay runtime retain the boundary as well. The public preview.7 Git pin below

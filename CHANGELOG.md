@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-preview.9 (unreleased)
+
+- Open Tanuki Map Editor automatically on first launch in a new project.
+- Include a ready-to-open Unity 6000 starter project in the authoring setup bundle.
+
 ## 0.1.0-preview.8 (unreleased)
 
 - Make New Empty Map and both samples ready to play, with ground, four starts, boundary, lighting and the preview player; keep preview helpers out of exports.
