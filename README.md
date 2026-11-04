@@ -1,3 +1,5 @@
+> **All four editor setup guides now live in [Tanuki Map Editors](https://github.com/Radbot-Productions/TanukiMapEditors).** Start with [Blender installation and Workshop setup](https://github.com/Radbot-Productions/TanukiMapEditors/blob/main/docs/blender.md), or choose [Unity](https://github.com/Radbot-Productions/TanukiMapEditors/blob/main/docs/unity.md), [Godot](https://github.com/Radbot-Productions/TanukiMapEditors/blob/main/docs/godot.md), or [Unreal](https://github.com/Radbot-Productions/TanukiMapEditors/blob/main/docs/unreal.md). This is the older Unity-only repository.
+
 # Tanuki Map Authoring
 
 A Unity authoring kit for portable Tanuki maps. Create scenes in Unity, place
@@ -233,3 +235,4 @@ Escape opens Resume, Free Camera / Tanuki Movement, Restart at Spawn, Settings
 and Exit Preview. Free camera uses WASD, Q/E, mouse look and Shift for speed.
 Closing the player removes its temporary map snapshot. No Unreal editor install
 is required. The same gameplay package is used by Blender, Godot and Unreal.
+
