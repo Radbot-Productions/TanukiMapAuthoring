@@ -22,8 +22,10 @@ namespace Radbot.MapAuthoring
             light.type=shape==Shape.Point?LightType.Point:shape==Shape.Spot?LightType.Spot:LightType.Directional;
             light.color=color;light.range=range;light.spotAngle=outerCone*2;light.innerSpotAngle=innerCone*2;
             light.shadows=shadows?LightShadows.Soft:LightShadows.None;
-            // Built-in/URP preview intensity is not photometrically equivalent to Unreal.
-            light.intensity=shape==Shape.Directional?intensity/1000f:intensity/100f;
+            // Normalize physical intensity by the selected base exposure. Built-in
+            // attenuation remains approximate; the shared Tanuki player is authoritative.
+            var environment=GetComponentInParent<PortableMapBaseLighting>();
+            light.intensity=intensity*(environment?environment.ExposureFactor:1f/1.2f);
         }
     }
 }

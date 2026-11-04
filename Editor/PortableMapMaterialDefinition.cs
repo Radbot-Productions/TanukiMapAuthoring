@@ -7,12 +7,9 @@ using UnityEngine;
 namespace Radbot.MapAuthoring.Editor
 {
     /// <summary>Editor-owned inputs; the stock Unity material is their preview projection.</summary>
-    public sealed class PortableMapMaterialDefinition : ScriptableObject, ISerializationCallbackReceiver
+    public sealed class PortableMapMaterialDefinition : ScriptableObject
     {
         public PortableMapMaterials.Profile surface;
-        public bool emissionEnabled;
-        public void OnBeforeSerialize(){}
-        public void OnAfterDeserialize(){if(surface==PortableMapMaterials.Profile.Emissive){surface=PortableMapMaterials.Profile.PBR;emissionEnabled=true;}}
         public Color baseColor=Color.white;
         public Texture2D baseColorTexture,normalTexture,roughnessTexture,metallicTexture,aoTexture,emissionTexture;
         [Range(0,1)]public float roughness=.7f,metallic;
@@ -48,7 +45,6 @@ namespace Radbot.MapAuthoring.Editor
             if(capture)
             {
                 data.surface=PortableMapMaterials.Classify(material);
-                data.emissionEnabled=PortableMapMaterials.HasEmission(material)||data.surface==PortableMapMaterials.Profile.Emissive;
                 data.baseColor=material.GetColor(material.HasProperty("_BaseColor")?"_BaseColor":"_Color").linear;data.opacity=data.baseColor.a;
                 data.baseColorTexture=material.mainTexture as Texture2D;
                 data.roughness=1-material.GetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_Glossiness");data.metallic=material.GetFloat("_Metallic");
@@ -62,7 +58,6 @@ namespace Radbot.MapAuthoring.Editor
             string path=AssetDatabase.GetAssetPath(material);
             if(!string.IsNullOrEmpty(path)&&path.StartsWith("Assets/",StringComparison.Ordinal))AssetDatabase.AddObjectToAsset(data,material);
             else transient[material]=data;
-            data.projectionCRC=material.ComputeCRC();data.sourceHash=data.SourceHash();
             return data;
         }
         Texture2D Derived(ref Texture2D target,string label,int width,int height)
@@ -85,11 +80,7 @@ namespace Radbot.MapAuthoring.Editor
         public void Apply()
         {
             if(!material)throw new InvalidOperationException("Material inputs have no material owner.");
-            // Keep the serialized legacy enum value readable, but author emission as a PBR input.
-            if(surface==PortableMapMaterials.Profile.Emissive){surface=PortableMapMaterials.Profile.PBR;emissionEnabled=true;}
             PortableMapMaterials.Configure(material,surface);
-            bool emit=surface==PortableMapMaterials.Profile.PBR&&emissionEnabled;
-            if(emit)material.EnableKeyword("_EMISSION");
             material.SetColor(material.HasProperty("_BaseColor")?"_BaseColor":"_Color",new Color(baseColor.r,baseColor.g,baseColor.b,surface is PortableMapMaterials.Profile.Cutout or PortableMapMaterials.Profile.Transparent?opacity:1).gamma);
             material.mainTexture=baseColorTexture;material.mainTextureScale=uvTiling;material.mainTextureOffset=uvOffset;
             material.SetFloat("_Metallic",metallic);material.SetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_Glossiness",1-roughness);
@@ -117,9 +108,8 @@ namespace Radbot.MapAuthoring.Editor
                 if(ao)
                 {var pixels=ao.GetPixels();for(int i=0;i<pixels.Length;i++)pixels[i]=new Color(pixels[i].r,pixels[i].r,pixels[i].r,1);Derived(ref nativeAO,"Tanuki Native AO",ao.width,ao.height).SetPixels(pixels);nativeAO.Apply();material.SetTexture("_OcclusionMap",nativeAO);material.SetFloat("_OcclusionStrength",1);}
                 else material.SetTexture("_OcclusionMap",null);
-                material.SetColor("_EmissionColor",emit?(emissionColor*emissionStrength).gamma:Color.black);
-                material.SetTexture("_EmissionMap",emit?emissionTexture:null);
-                material.globalIlluminationFlags=emit?MaterialGlobalIlluminationFlags.BakedEmissive:MaterialGlobalIlluminationFlags.EmissiveIsBlack;
+                material.SetColor("_EmissionColor",surface==PortableMapMaterials.Profile.Emissive?(emissionColor*emissionStrength).gamma:Color.black);
+                material.SetTexture("_EmissionMap",emissionTexture);
                 projectionCRC=material.ComputeCRC();sourceHash=SourceHash();
                 EditorUtility.SetDirty(this);EditorUtility.SetDirty(material);
             }

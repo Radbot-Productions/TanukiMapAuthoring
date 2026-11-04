@@ -178,7 +178,8 @@ namespace Radbot.MapAuthoring.Editor
             byte[] bytes=glb.Build();
             if (bytes.Length>256*1024*1024) throw new InvalidOperationException("Prototype GLB limit is 256 MiB.");
             string hash; using (var sha=SHA1.Create()) hash=BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
-            string json=Json(D("schemaVersion",lights.Count>0?3:2,"mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers,"boundary",boundaryRecord,"lights",lights));
+            var environment=root.GetComponent<PortableMapBaseLighting>();
+            string json=Json(D("schemaVersion",4,"baseLighting",environment?environment.Key:"cartoon-street-day","mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers,"boundary",boundaryRecord,"lights",lights));
             json=json.Substring(0,json.Length-1)+",\"authoring\":"+authoring.Json()+"}";
             if(Encoding.UTF8.GetByteCount(json)>8*1024*1024) throw new InvalidOperationException("Map manifest exceeds the runtime's 8 MiB limit.");
             return new PreparedMap(bytes,json,meshes.Count,colliders.Count,markers.Count,hash);
@@ -325,14 +326,11 @@ namespace Radbot.MapAuthoring.Editor
             {
                 if(materialIds.TryGetValue(material,out int existing)) return existing;
                 PortableMapMaterials.Validate(material);
-                var inputs=PortableMapMaterialDefinition.Find(material);
                 var profile=PortableMapMaterials.Classify(material);
                 string colorKey=material.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
                 Color color=material.GetColor(colorKey).linear;
-                if(inputs)color=new Color(inputs.baseColor.r,inputs.baseColor.g,inputs.baseColor.b,inputs.surface is PortableMapMaterials.Profile.Cutout or PortableMapMaterials.Profile.Transparent?inputs.opacity:1);
                 var pbr=D("baseColorFactor",new[]{color.r,color.g,color.b,color.a},"metallicFactor",material.GetFloat("_Metallic"),
-                    "roughnessFactor",1f-material.GetFloat(material.HasProperty("_Smoothness") ? "_Smoothness" : "_Glossiness"));
-                if(inputs){pbr["metallicFactor"]=inputs.metallicTexture?1f:inputs.metallic;pbr["roughnessFactor"]=inputs.roughnessTexture?1f:inputs.roughness;}
+                    "roughnessFactor",PortableMapMaterials.IsTanuki(material)?material.GetFloat("_Roughness"):1f-material.GetFloat(material.HasProperty("_Smoothness") ? "_Smoothness" : "_Glossiness"));
                 Texture texture=material.mainTexture;
                 object Reference(Texture value,string kind="color",float multiplier=1)
                 {
@@ -350,25 +348,23 @@ namespace Radbot.MapAuthoring.Editor
                 if(profile==PortableMapMaterials.Profile.Cutout){result["alphaMode"]="MASK";result["alphaCutoff"]=material.GetFloat("_Cutoff");}
                 if(profile==PortableMapMaterials.Profile.Transparent)result["alphaMode"]="BLEND";
                 Texture Map(string key)=>material.HasProperty(key)?material.GetTexture(key):null;
-                if(inputs&&(inputs.roughnessTexture||inputs.metallicTexture))pbr["metallicRoughnessTexture"]=Reference(inputs.exportMetalRough,"data");
-                else if(!inputs&&material.IsKeywordEnabled("_METALLICGLOSSMAP")&&Map("_MetallicGlossMap"))
+                bool tanuki=PortableMapMaterials.IsTanuki(material);
+                if(tanuki&&Map("_MetallicRoughnessMap"))pbr["metallicRoughnessTexture"]=Reference(Map("_MetallicRoughnessMap"),"data");
+                if(material.IsKeywordEnabled("_METALLICGLOSSMAP")&&Map("_MetallicGlossMap"))
                 {
                     float smooth=material.GetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_GlossMapScale");
                     pbr["metallicRoughnessTexture"]=Reference(Map("_MetallicGlossMap"),"metalRough",smooth);pbr["metallicFactor"]=1f;pbr["roughnessFactor"]=1f;
                 }
-                if(inputs&&inputs.normalTexture)
-                {var normal=(Dictionary<string,object>)Reference(inputs.nativeNormal,"data");normal["scale"]=inputs.normalStrength;result["normalTexture"]=normal;}
-                else if(material.IsKeywordEnabled("_NORMALMAP")&&Map("_BumpMap"))
+                if((tanuki||material.IsKeywordEnabled("_NORMALMAP"))&&Map("_BumpMap"))
                 {var normal=(Dictionary<string,object>)Reference(Map("_BumpMap"),"normal");normal["scale"]=material.GetFloat("_BumpScale");result["normalTexture"]=normal;}
                 if(Map("_OcclusionMap"))
-                {var ao=(Dictionary<string,object>)Reference(Map("_OcclusionMap"),"occlusion",material.GetFloat("_OcclusionStrength"));ao["strength"]=1f;result["occlusionTexture"]=ao;}
-                if(inputs?(inputs.surface==PortableMapMaterials.Profile.PBR&&inputs.emissionEnabled):PortableMapMaterials.HasEmission(material))
+                {var ao=(Dictionary<string,object>)Reference(Map("_OcclusionMap"),tanuki?"tanukiAO":"occlusion",material.GetFloat("_OcclusionStrength"));ao["strength"]=1f;result["occlusionTexture"]=ao;}
+                if(PortableMapMaterials.HasEmission(material))
                 {
-                    Color emission=material.GetColor("_EmissionColor").linear;float strength=Mathf.Max(1,emission.maxColorComponent);
+                    Color emission=material.GetColor("_EmissionColor").linear*(tanuki?material.GetFloat("_EmissionStrength"):1);float strength=Mathf.Max(1,emission.maxColorComponent);
                     result["emissiveFactor"]=new[]{emission.r/strength,emission.g/strength,emission.b/strength};
                     if(strength>1)result["extensions"]=D("KHR_materials_emissive_strength",D("emissiveStrength",strength));
                     if(Map("_EmissionMap"))result["emissiveTexture"]=Reference(Map("_EmissionMap"));
-                    if(inputs){result["emissiveFactor"]=new[]{inputs.emissionColor.r,inputs.emissionColor.g,inputs.emissionColor.b};result["extensions"]=D("KHR_materials_emissive_strength",D("emissiveStrength",inputs.emissionStrength));}
                 }
                 int index=materials.Count; materials.Add(result); materialIds.Add(material,index); return index;
             }
@@ -398,10 +394,10 @@ namespace Radbot.MapAuthoring.Editor
                         finally{if(decoder)Object.DestroyImmediate(decoder);}
                     }
                     if(copy.width>8192||copy.height>8192)throw new InvalidOperationException("Texture source exceeds 8192 pixels: "+source.name);
-                    if(kind=="metalRough"||kind=="occlusion")
+                    if(kind=="metalRough"||kind=="occlusion"||kind=="tanukiAO")
                     {
                         var pixels=copy.GetPixels();
-                        for(int i=0;i<pixels.Length;i++){var c=pixels[i];float ao=1-multiplier*(1-c.g);pixels[i]=kind=="metalRough"?new Color(1,1-c.a*multiplier,c.r,1):new Color(ao,ao,ao,1);}
+                        for(int i=0;i<pixels.Length;i++){var c=pixels[i];float ao=1-multiplier*(1-(kind=="tanukiAO"?c.r:c.g));pixels[i]=kind=="metalRough"?new Color(1,1-c.a*multiplier,c.r,1):new Color(ao,ao,ao,1);}
                         copy.SetPixels(pixels);
                     }
                     copy.Apply();

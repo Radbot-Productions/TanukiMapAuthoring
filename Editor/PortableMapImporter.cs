@@ -26,6 +26,7 @@ namespace Radbot.MapAuthoring.Editor
             public PortableMapAuthoringData authoring;
             public Boundary boundary;
             public MapLight[] lights;
+            public string baseLighting;
         }
         [Serializable] public sealed class Entry {public string id; public int mesh; public bool visible,collision;}
         [Serializable] public sealed class Primitive {public string id,type; public float[] position,rotation,size; public float radius,halfHeight;}
@@ -75,11 +76,12 @@ namespace Radbot.MapAuthoring.Editor
                     var size=V(m.boundary.size);V(m.boundary.position);Q(m.boundary.rotation);
                     Require(size.x>0 && size.y>0 && size.z>0 && (m.boundary.shape!="cylinder"||Mathf.Abs(size.x-size.z)<.001f),"Invalid map boundary dimensions.");
                 }
-                Require(m!=null && (m.schemaVersion==1||m.schemaVersion==2||m.schemaVersion==3) && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
+                Require(m!=null && (m.schemaVersion==1||m.schemaVersion==2||m.schemaVersion==3||m.schemaVersion==4) && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
                 if(m.schemaVersion>=2) Require(m.boundary!=null && m.markers!=null && m.markers.Length>=4,"A playable map requires a boundary and four player starts.");
-                if(m.schemaVersion==3)Require(m.lights!=null,"Light schema requires a lights array.");
+                if(m.schemaVersion>=3)Require(m.lights!=null,"Light schema requires a lights array.");
+                if(m.schemaVersion==4)Require(m.baseLighting=="cartoon-street-day"||m.baseLighting=="cartoon-street-night","Unsupported base lighting profile.");
                 m.lights=m.lights??Array.Empty<MapLight>();
-                Require(m.lights.Length<=256 && (m.lights.Length==0 || m.schemaVersion==3),"Invalid light count or schema.");
+                Require(m.lights.Length<=256 && (m.lights.Length==0 || m.schemaVersion>=3),"Invalid light count or schema.");
                 foreach(var l in m.lights)
                 {
                     V(l.position);Q(l.rotation);
@@ -176,6 +178,7 @@ namespace Radbot.MapAuthoring.Editor
             var root=rootObject.AddComponent<PortableMapRoot>(); root.mapId=fork ? Guid.NewGuid().ToString("N") : m.mapId;
             foreach(var initial in root.GetComponentsInChildren<PortableMapBoundary>(true)) Object.DestroyImmediate(initial.gameObject);
             root.mapName=Path.GetFileName(folder);
+            (root.GetComponent<PortableMapBaseLighting>()??root.gameObject.AddComponent<PortableMapBaseLighting>()).SetKey(m.baseLighting??"cartoon-street-day");
             var nodes=new List<Transform>(); var bindings=new Dictionary<string,PortableMapAuthoringData.Binding>();
             if(m.authoring!=null)
             {
@@ -362,7 +365,7 @@ namespace Radbot.MapAuthoring.Editor
                 var material=PortableMapMaterials.Create(profile);material.name=source.name??"Imported material";
                 var f=pbr.baseColorFactor; var color=new Color(f[0],f[1],f[2],f[3]).gamma;
                 material.SetColor(material.HasProperty("_BaseColor") ? "_BaseColor" : "_Color",color); material.SetFloat("_Metallic",pbr.metallicFactor);
-                material.SetFloat(material.HasProperty("_Smoothness") ? "_Smoothness" : "_Glossiness",1-pbr.roughnessFactor);
+                material.SetFloat("_Roughness",pbr.roughnessFactor);
                 Vector2? commonScale=null,commonOffset=null;
                 void SetTexture(string property,TextureRef reference,string kind="color",float metallic=1,float roughness=1)
                 {
@@ -379,8 +382,7 @@ namespace Radbot.MapAuthoring.Editor
                     material.SetTexture(property,Load(reference,kind,metallic,roughness));
                 }
                 SetTexture(material.HasProperty("_BaseMap")?"_BaseMap":"_MainTex",pbr.baseColorTexture);
-                SetTexture("_MetallicGlossMap",pbr.metallicRoughnessTexture,"metalRough",pbr.metallicFactor,pbr.roughnessFactor);
-                if(pbr.metallicRoughnessTexture!=null){material.EnableKeyword("_METALLICGLOSSMAP");material.SetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_GlossMapScale",1);}
+                SetTexture("_MetallicRoughnessMap",pbr.metallicRoughnessTexture,"data");
                 SetTexture("_BumpMap",source.normalTexture,"normal");if(source.normalTexture!=null){material.EnableKeyword("_NORMALMAP");material.SetFloat("_BumpScale",source.normalTexture.scale);}
                 SetTexture("_OcclusionMap",source.occlusionTexture,"occlusion");if(source.occlusionTexture!=null)material.SetFloat("_OcclusionStrength",source.occlusionTexture.strength);
                 SetTexture("_EmissionMap",source.emissiveTexture);if(emission)material.SetColor("_EmissionColor",new Color(emissive[0]*emissionStrength,emissive[1]*emissionStrength,emissive[2]*emissionStrength).gamma);
