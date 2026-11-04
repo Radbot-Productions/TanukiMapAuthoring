@@ -179,7 +179,9 @@ namespace Radbot.MapAuthoring.Editor
             if (bytes.Length>256*1024*1024) throw new InvalidOperationException("Prototype GLB limit is 256 MiB.");
             string hash; using (var sha=SHA1.Create()) hash=BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
             var environment=root.GetComponent<PortableMapBaseLighting>();
-            string json=Json(D("schemaVersion",4,"baseLighting",environment?environment.Key:"cartoon-street-day","mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers,"boundary",boundaryRecord,"lights",lights));
+            var manifest=D("schemaVersion",5,"baseLighting",environment?environment.Key:"cartoon-street-day","mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers,"boundary",boundaryRecord,"lights",lights);
+            if(environment&&environment.overrideSun){var c=environment.sunColor.linear;if(!Finite(environment.sunRotation)||!Finite(new Vector3(c.r,c.g,c.b))||Mathf.Min(c.r,Mathf.Min(c.g,c.b))<0||c.maxColorComponent>1||!Finite(environment.sunIntensity)||environment.sunIntensity<0||environment.sunIntensity>10000000)throw new InvalidOperationException("Invalid sun override.");manifest["baseSun"]=D("rotation",Rotation(Quaternion.Euler(environment.sunRotation)),"color",new[]{c.r,c.g,c.b},"intensity",environment.sunIntensity,"shadows",environment.sunShadows);}
+            string json=Json(manifest);
             json=json.Substring(0,json.Length-1)+",\"authoring\":"+authoring.Json()+"}";
             if(Encoding.UTF8.GetByteCount(json)>8*1024*1024) throw new InvalidOperationException("Map manifest exceeds the runtime's 8 MiB limit.");
             return new PreparedMap(bytes,json,meshes.Count,colliders.Count,markers.Count,hash);

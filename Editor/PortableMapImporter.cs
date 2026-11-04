@@ -27,12 +27,14 @@ namespace Radbot.MapAuthoring.Editor
             public Boundary boundary;
             public MapLight[] lights;
             public string baseLighting;
+            public SunOverride baseSun;
         }
         [Serializable] public sealed class Entry {public string id; public int mesh; public bool visible,collision;}
         [Serializable] public sealed class Primitive {public string id,type; public float[] position,rotation,size; public float radius,halfHeight;}
         [Serializable] public sealed class Marker {public string id,type,spawnTag; public float[] position,rotation;}
         [Serializable] public sealed class Boundary {public string id,shape; public float[] position,rotation,size;}
         [Serializable] public sealed class MapLight {public string id,type;public float[] position,rotation,color;public float intensity,range,innerCone,outerCone;public bool shadows;}
+        [Serializable] public sealed class SunOverride {public float[] rotation,color;public float intensity;public bool shadows;}
         [Serializable] sealed class Document {public GMesh[] meshes; public Accessor[] accessors; public View[] bufferViews; public GMaterial[] materials; public Image[] images; public Texture[] textures; public Sampler[] samplers;public Buffer[] buffers;public string[] extensionsUsed;}
         [Serializable] sealed class Buffer {public int byteLength; public string uri;}
         [Serializable] sealed class GMesh {public string name; public Part[] primitives;}
@@ -68,6 +70,15 @@ namespace Radbot.MapAuthoring.Editor
                 string manifestJson=new UTF8Encoding(false,true).GetString(r.ReadBytes(j));
                 var manifestFields=PortableMapJson.Read(manifestJson);
                 var m=JsonUtility.FromJson<Manifest>(manifestJson);
+                if(m!=null&&!manifestFields.ContainsKey("baseSun"))m.baseSun=null;
+                if(manifestFields.TryGetValue("baseSun",out var sunField))
+                {
+                    Require(m!=null&&m.schemaVersion>=5&&sunField is Dictionary<string,object>,"Unsupported base sun override.");
+                    var fields=(Dictionary<string,object>)sunField;Require(fields.TryGetValue("shadows",out var shadows)&&shadows is bool,"Invalid sun shadows.");
+                    Require(fields.TryGetValue("intensity",out var intensity)&&intensity is double,"Missing sun intensity.");
+                    Require(m.baseSun!=null,"Invalid sun override.");Q(m.baseSun.rotation);var color=V(m.baseSun.color);
+                    Require(color.x>=0&&color.y>=0&&color.z>=0&&color.x<=1&&color.y<=1&&color.z<=1&&Finite(m.baseSun.intensity)&&m.baseSun.intensity>=0&&m.baseSun.intensity<=10000000,"Invalid sun color/intensity.");
+                }
                 if(m!=null && (!manifestFields.ContainsKey("authoring") || manifestFields["authoring"]==null)) m.authoring=null;
                 if(m!=null && (!manifestFields.ContainsKey("boundary") || manifestFields["boundary"]==null)) m.boundary=null;
                 if(m?.boundary!=null)
@@ -76,10 +87,10 @@ namespace Radbot.MapAuthoring.Editor
                     var size=V(m.boundary.size);V(m.boundary.position);Q(m.boundary.rotation);
                     Require(size.x>0 && size.y>0 && size.z>0 && (m.boundary.shape!="cylinder"||Mathf.Abs(size.x-size.z)<.001f),"Invalid map boundary dimensions.");
                 }
-                Require(m!=null && (m.schemaVersion==1||m.schemaVersion==2||m.schemaVersion==3||m.schemaVersion==4) && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
+                Require(m!=null && (m.schemaVersion==1||m.schemaVersion==2||m.schemaVersion==3||m.schemaVersion==4||m.schemaVersion==5) && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
                 if(m.schemaVersion>=2) Require(m.boundary!=null && m.markers!=null && m.markers.Length>=4,"A playable map requires a boundary and four player starts.");
                 if(m.schemaVersion>=3)Require(m.lights!=null,"Light schema requires a lights array.");
-                if(m.schemaVersion==4)Require(m.baseLighting=="cartoon-street-day"||m.baseLighting=="cartoon-street-night","Unsupported base lighting profile.");
+                if(m.schemaVersion>=4)Require(m.baseLighting=="cartoon-street-day"||m.baseLighting=="cartoon-street-night","Unsupported base lighting profile.");
                 m.lights=m.lights??Array.Empty<MapLight>();
                 Require(m.lights.Length<=256 && (m.lights.Length==0 || m.schemaVersion>=3),"Invalid light count or schema.");
                 foreach(var l in m.lights)
@@ -179,6 +190,7 @@ namespace Radbot.MapAuthoring.Editor
             foreach(var initial in root.GetComponentsInChildren<PortableMapBoundary>(true)) Object.DestroyImmediate(initial.gameObject);
             root.mapName=Path.GetFileName(folder);
             (root.GetComponent<PortableMapBaseLighting>()??root.gameObject.AddComponent<PortableMapBaseLighting>()).SetKey(m.baseLighting??"cartoon-street-day");
+            if(m.baseSun!=null){var settings=root.GetComponent<PortableMapBaseLighting>();var sun=m.baseSun;var q=sun.rotation;settings.overrideSun=true;settings.sunRotation=new Quaternion(q[1],q[2],q[0],q[3]).eulerAngles;settings.sunIntensity=sun.intensity;settings.sunColor=new Color(sun.color[0],sun.color[1],sun.color[2]).gamma;settings.sunShadows=sun.shadows;settings.Refresh();}
             var nodes=new List<Transform>(); var bindings=new Dictionary<string,PortableMapAuthoringData.Binding>();
             if(m.authoring!=null)
             {

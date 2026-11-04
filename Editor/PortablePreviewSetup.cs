@@ -14,14 +14,25 @@ namespace Radbot.MapAuthoring.Editor
         }
         static void EnsureReferences(PortableMapRoot map)
         {
-            if(map.transform.Find("Character Scale References"))return;
+            var existing=map.transform.Find("Character Scale References");
+            if(existing&&existing.GetComponent<PortableMapPreviewReference>()&&existing.GetComponent<PortableMapPreviewReference>().layoutVersion==3)return;
+            if(existing&&existing.GetComponent<PortableMapPreviewReference>())Undo.DestroyObjectImmediate(existing.gameObject);
             var group=new GameObject("Character Scale References");group.transform.SetParent(map.transform,false);group.AddComponent<PortableMapPreviewReference>();
+            group.GetComponent<PortableMapPreviewReference>().layoutVersion=3;
+            Bounds floor=new Bounds(new Vector3(0,-.1f,0),new Vector3(20,.2f,20));float area=0;
+            foreach(var mesh in map.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if(!mesh.sharedMesh||mesh.GetComponentInParent<PortableMapPreviewReference>())continue;
+                var box=mesh.sharedMesh.bounds;var points=new Bounds(map.transform.InverseTransformPoint(mesh.transform.TransformPoint(box.min)),Vector3.zero);
+                for(int corner=0;corner<8;corner++)points.Encapsulate(map.transform.InverseTransformPoint(mesh.transform.TransformPoint(box.center+Vector3.Scale(box.extents,new Vector3((corner&1)==0?-1:1,(corner&2)==0?-1:1,(corner&4)==0?-1:1)))));
+                if(points.size.y<Mathf.Min(points.size.x,points.size.z)*.3f&&points.size.x*points.size.z>area){floor=points;area=points.size.x*points.size.z;}
+            }
             string[] names={"Tanuki","Tengu"};
             for(int i=0;i<names.Length;i++)
             {
                 var prefab=AssetDatabase.LoadAssetAtPath<GameObject>("Packages/com.radbot.tanuki-map-authoring/Runtime/References/"+names[i]+".fbx");
                 if(!prefab)throw new System.InvalidOperationException("Missing character scale reference: "+names[i]);
-                var copy=(GameObject)PrefabUtility.InstantiatePrefab(prefab,group.transform);copy.name=names[i]+" (scale reference)";copy.transform.localPosition=new Vector3(-3+i*3,0,-5);
+                var copy=(GameObject)PrefabUtility.InstantiatePrefab(prefab,group.transform);copy.name=names[i]+" (scale reference)";copy.transform.localPosition=new Vector3(floor.center.x+(i==0?-1:1)*Mathf.Min(1.5f,floor.size.x*.2f),floor.max.y,floor.min.z+Mathf.Min(1.5f,floor.size.z*.15f));
                 foreach(var animator in copy.GetComponentsInChildren<Animator>())animator.enabled=false;
             }
         }

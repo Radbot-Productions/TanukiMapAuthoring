@@ -1,6 +1,6 @@
 {
   "name": "com.radbot.tanuki-map-authoring",
-  "version": "0.2.0-preview.1",
+  "version": "0.2.0-preview.3",
   "displayName": "Tanuki Map Authoring",
   "description": "Author static Tanuki maps entirely in Unity and export portable runtime packages.",
   "unity": "6000.6",

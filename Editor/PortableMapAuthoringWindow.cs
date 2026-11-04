@@ -65,8 +65,6 @@ namespace Radbot.MapAuthoring.Editor
         }
         static PortableMapRoot CurrentMap()
         {
-            var selected=Selection.activeGameObject?Selection.activeGameObject.GetComponentInParent<PortableMapRoot>():null;
-            if(selected && !EditorUtility.IsPersistent(selected)) return selected;
             var scene=SceneManager.GetActiveScene();
             var roots=scene.IsValid()?scene.GetRootGameObjects().SelectMany(g=>g.GetComponentsInChildren<PortableMapRoot>(true)).ToArray():Array.Empty<PortableMapRoot>();
             return roots.Length==1?roots[0]:null;
@@ -123,7 +121,7 @@ namespace Radbot.MapAuthoring.Editor
             if(root && (EditorUtility.IsPersistent(root)||!root.gameObject.scene.IsValid())) throw new InvalidOperationException("Select a map in an open scene.");
             map=root;Repaint();
         }
-        void OnEnable() {Selection.selectionChanged+=FollowSelection;EditorApplication.hierarchyChanged+=Repaint;FollowSelection();if(map&&!EditorApplication.isPlayingOrWillChangePlaymode)PortablePreviewSetup.Ensure(map);}
+        void OnEnable() {Selection.selectionChanged+=FollowSelection;EditorApplication.hierarchyChanged+=Repaint;FollowSelection();if(map&&!EditorApplication.isPlayingOrWillChangePlaymode)PortablePreviewSetup.Ensure(map);if(!Application.isBatchMode)EditorApplication.delayCall+=()=>{if(this)PortableMapWorkshopPublisher.Connect();};}
         void OnDisable() {Selection.selectionChanged-=FollowSelection;EditorApplication.hierarchyChanged-=Repaint;}
         void FollowSelection() {var current=CurrentMap();if(current && current!=map) SelectMap(current);Repaint();}
         void OnInspectorUpdate() {if(PortableMapWorkshopPublisher.IsPending) Repaint();}
@@ -221,9 +219,11 @@ namespace Radbot.MapAuthoring.Editor
         }
         void OnGUI()
         {
+            var active=CurrentMap();if(active!=map)map=active;
+            if(!map)EditorGUILayout.HelpBox("The active scene must contain exactly one Tanuki Map Root. Create or open a map to preview it.",MessageType.Info);
+            if(PortableGameplayPreviewEditor.IsBusy)EditorGUILayout.HelpBox(PortableGameplayPreviewEditor.Status,MessageType.Info);
             using(new EditorGUI.DisabledScope(!map||EditorApplication.isPlayingOrWillChangePlaymode))
                 if(GUILayout.Button("Play in Tanuki")){PortableGameplayPreviewEditor.Play(map,out message);Repaint();}
-            if(GUILayout.Button("Choose Tanuki Preview"))PortableGameplayPreviewEditor.Configure();
             scroll=EditorGUILayout.BeginScrollView(scroll);EditorGUILayout.Space(8);
             using(new EditorGUI.DisabledScope(busy||EditorApplication.isPlayingOrWillChangePlaymode||PortableMapWorkshopPublisher.IsPending))
             {
