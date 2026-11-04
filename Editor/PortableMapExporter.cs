@@ -154,10 +154,31 @@ namespace Radbot.MapAuthoring.Editor
             if (meshes.Count==0) throw new InvalidOperationException("Add static geometry before exporting.");
             if(requirePlayable && markers.Count<4) throw new InvalidOperationException("A map needs at least four active Player Starts. Found "+markers.Count+".");
             if (meshes.Count>10000 || colliders.Count>10000 || markers.Count>10000) throw new InvalidOperationException("Prototype limit: 10,000 entries per category.");
+            var lights=new List<object>();
+            foreach(var native in root.GetComponentsInChildren<Light>())
+            {
+                if(PortablePreviewPlayer.IsPreview(native.transform))continue;
+                if(!native.GetComponent<PortableMapLight>())throw new InvalidOperationException("Add a Tanuki Map Light component to authored lights: "+native.name);
+            }
+            foreach(var light in root.GetComponentsInChildren<PortableMapLight>())
+            {
+                if(PortablePreviewPlayer.IsPreview(light.transform))continue;
+                if(!light.enabled || !light.GetComponent<Light>().enabled)throw new InvalidOperationException("Remove or enable disabled Map Lights: "+light.name);
+                if(!Enum.IsDefined(typeof(PortableMapLight.Shape),light.shape) || !Finite(light.intensity) || light.intensity<0 || !Finite(light.range) || light.range<=0 || light.range>100000 ||
+                    !Finite(light.innerCone) || !Finite(light.outerCone) || light.innerCone<0 || light.innerCone>light.outerCone || light.outerCone<=0 || light.outerCone>=90)
+                    throw new InvalidOperationException("Invalid portable light settings: "+light.name);
+                Color c=light.color.linear;
+                if(!Finite(new Vector3(c.r,c.g,c.b)) || Mathf.Min(c.r,Mathf.Min(c.g,c.b))<0 || c.maxColorComponent>1)throw new InvalidOperationException("Portable light color must be in 0–1: "+light.name);
+                string id="light-"+serial++;authoring.Add(id,light.transform);
+                lights.Add(D("id",id,"type",light.shape.ToString().ToLowerInvariant(),"position",Position(root.transform.InverseTransformPoint(light.transform.position)),
+                    "rotation",Rotation(Quaternion.Inverse(root.transform.rotation)*light.transform.rotation),"color",new[]{c.r,c.g,c.b},"intensity",light.intensity,"range",light.range*100,
+                    "innerCone",light.innerCone,"outerCone",light.outerCone,"shadows",light.shadows));
+            }
+            if(lights.Count>256)throw new InvalidOperationException("Portable maps support up to 256 lights.");
             byte[] bytes=glb.Build();
             if (bytes.Length>256*1024*1024) throw new InvalidOperationException("Prototype GLB limit is 256 MiB.");
             string hash; using (var sha=SHA1.Create()) hash=BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
-            string json=Json(D("schemaVersion",2,"mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers,"boundary",boundaryRecord));
+            string json=Json(D("schemaVersion",lights.Count>0?3:2,"mapId",root.mapId,"sceneSha1",hash,"meshes",meshes,"colliders",colliders,"markers",markers,"boundary",boundaryRecord,"lights",lights));
             json=json.Substring(0,json.Length-1)+",\"authoring\":"+authoring.Json()+"}";
             if(Encoding.UTF8.GetByteCount(json)>8*1024*1024) throw new InvalidOperationException("Map manifest exceeds the runtime's 8 MiB limit.");
             return new PreparedMap(bytes,json,meshes.Count,colliders.Count,markers.Count,hash);
@@ -214,6 +235,7 @@ namespace Radbot.MapAuthoring.Editor
 
         // UE X=Unity Z, UE Y=Unity X, UE Z=Unity Y. Units in manifest are centimetres.
         static float[] Position(Vector3 v) => new[] {v.z*100f,v.x*100f,v.y*100f};
+        static bool Finite(float v) => !float.IsNaN(v)&&!float.IsInfinity(v)&&Mathf.Abs(v)<=10000000;
         static bool Finite(Vector3 v) => !float.IsNaN(v.x)&&!float.IsNaN(v.y)&&!float.IsNaN(v.z)&&!float.IsInfinity(v.x)&&!float.IsInfinity(v.y)&&!float.IsInfinity(v.z)&&Mathf.Max(Mathf.Abs(v.x),Mathf.Abs(v.y),Mathf.Abs(v.z))<=100000;
         static float[] Rotation(Quaternion q) => new[] {q.z,q.x,q.y,q.w};
         internal static Dictionary<string,object> D(params object[] pairs)
@@ -303,11 +325,14 @@ namespace Radbot.MapAuthoring.Editor
             {
                 if(materialIds.TryGetValue(material,out int existing)) return existing;
                 PortableMapMaterials.Validate(material);
+                var inputs=PortableMapMaterialDefinition.Find(material);
                 var profile=PortableMapMaterials.Classify(material);
                 string colorKey=material.HasProperty("_BaseColor") ? "_BaseColor" : "_Color";
                 Color color=material.GetColor(colorKey).linear;
+                if(inputs)color=new Color(inputs.baseColor.r,inputs.baseColor.g,inputs.baseColor.b,inputs.surface is PortableMapMaterials.Profile.Cutout or PortableMapMaterials.Profile.Transparent?inputs.opacity:1);
                 var pbr=D("baseColorFactor",new[]{color.r,color.g,color.b,color.a},"metallicFactor",material.GetFloat("_Metallic"),
                     "roughnessFactor",1f-material.GetFloat(material.HasProperty("_Smoothness") ? "_Smoothness" : "_Glossiness"));
+                if(inputs){pbr["metallicFactor"]=inputs.metallicTexture?1f:inputs.metallic;pbr["roughnessFactor"]=inputs.roughnessTexture?1f:inputs.roughness;}
                 Texture texture=material.mainTexture;
                 object Reference(Texture value,string kind="color",float multiplier=1)
                 {
@@ -325,12 +350,15 @@ namespace Radbot.MapAuthoring.Editor
                 if(profile==PortableMapMaterials.Profile.Cutout){result["alphaMode"]="MASK";result["alphaCutoff"]=material.GetFloat("_Cutoff");}
                 if(profile==PortableMapMaterials.Profile.Transparent)result["alphaMode"]="BLEND";
                 Texture Map(string key)=>material.HasProperty(key)?material.GetTexture(key):null;
-                if(material.IsKeywordEnabled("_METALLICGLOSSMAP")&&Map("_MetallicGlossMap"))
+                if(inputs&&(inputs.roughnessTexture||inputs.metallicTexture))pbr["metallicRoughnessTexture"]=Reference(inputs.exportMetalRough,"data");
+                else if(!inputs&&material.IsKeywordEnabled("_METALLICGLOSSMAP")&&Map("_MetallicGlossMap"))
                 {
                     float smooth=material.GetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_GlossMapScale");
                     pbr["metallicRoughnessTexture"]=Reference(Map("_MetallicGlossMap"),"metalRough",smooth);pbr["metallicFactor"]=1f;pbr["roughnessFactor"]=1f;
                 }
-                if(material.IsKeywordEnabled("_NORMALMAP")&&Map("_BumpMap"))
+                if(inputs&&inputs.normalTexture)
+                {var normal=(Dictionary<string,object>)Reference(inputs.nativeNormal,"data");normal["scale"]=inputs.normalStrength;result["normalTexture"]=normal;}
+                else if(material.IsKeywordEnabled("_NORMALMAP")&&Map("_BumpMap"))
                 {var normal=(Dictionary<string,object>)Reference(Map("_BumpMap"),"normal");normal["scale"]=material.GetFloat("_BumpScale");result["normalTexture"]=normal;}
                 if(Map("_OcclusionMap"))
                 {var ao=(Dictionary<string,object>)Reference(Map("_OcclusionMap"),"occlusion",material.GetFloat("_OcclusionStrength"));ao["strength"]=1f;result["occlusionTexture"]=ao;}
@@ -340,6 +368,7 @@ namespace Radbot.MapAuthoring.Editor
                     result["emissiveFactor"]=new[]{emission.r/strength,emission.g/strength,emission.b/strength};
                     if(strength>1)result["extensions"]=D("KHR_materials_emissive_strength",D("emissiveStrength",strength));
                     if(Map("_EmissionMap"))result["emissiveTexture"]=Reference(Map("_EmissionMap"));
+                    if(inputs){result["emissiveFactor"]=new[]{inputs.emissionColor.r,inputs.emissionColor.g,inputs.emissionColor.b};result["extensions"]=D("KHR_materials_emissive_strength",D("emissiveStrength",inputs.emissionStrength));}
                 }
                 int index=materials.Count; materials.Add(result); materialIds.Add(material,index); return index;
             }

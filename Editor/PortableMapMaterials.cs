@@ -15,6 +15,7 @@ namespace Radbot.MapAuthoring.Editor
         public static bool HasTextures(Material material)=>TextureProperties.Any(p=>material.HasProperty(p)&&material.GetTexture(p));
         public static Profile Classify(Material material)
         {
+            var definition=PortableMapMaterialDefinition.Find(material);if(definition)return definition.surface;
             float mode=material.HasProperty("_Surface")?material.GetFloat("_Surface"):material.HasProperty("_Mode")?material.GetFloat("_Mode"):0;
             string renderType=material.GetTag("RenderType",true,"");
             if(mode>=2 || (material.HasProperty("_Surface")&&mode>0)||renderType=="Transparent")return Profile.Transparent;
@@ -26,6 +27,7 @@ namespace Radbot.MapAuthoring.Editor
         public static void Validate(Material material)
         {
             if(!material || !material.shader)throw new InvalidOperationException("Missing map material.");
+            var definition=PortableMapMaterialDefinition.Find(material);if(definition)definition.ValidateProjection();
             string shader=material.shader.name;
             if(shader!="Standard"&&shader!="Universal Render Pipeline/Lit")throw new InvalidOperationException("Material '"+material.name+"' uses unsupported shader '"+shader+"'. Use Tanuki material presets or Repair Materials.");
             foreach(string keyword in new[]{"_PARALLAXMAP","_DETAIL_MULX2","_DETAIL_SCALED","_SPECULAR_SETUP","_RECEIVE_SHADOWS_OFF","_SPECULARHIGHLIGHTS_OFF","_ENVIRONMENTREFLECTIONS_OFF"})

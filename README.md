@@ -205,3 +205,14 @@ corner following and top-out. It approximates object-form movement, without
 wall jumps or sculpted-body collision. Use Unreal for final traversal checks.
 The helper and all descendants are excluded from exports and thumbnails.
 Unity's Input Manager must be enabled (Legacy or Both).
+
+For actual game behavior, use **Play in Tanuki** in the map editor window.
+**Choose Tanuki Preview** selects `TanukiMapPreview.exe` from the shared Windows
+gameplay package. It exports a temporary snapshot and launches the production
+Tanuki pawn, movement, climbing, gliding and camera. The Unity-native helper
+described above remains an approximate local blockout tool.
+
+Escape opens Resume, Free Camera / Tanuki Movement, Restart at Spawn, Settings
+and Exit Preview. Free camera uses WASD, Q/E, mouse look and Shift for speed.
+Closing the player removes its temporary map snapshot. No Unreal editor install
+is required. The same gameplay package is used by Blender, Godot and Unreal.

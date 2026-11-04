@@ -87,6 +87,15 @@ namespace Radbot.MapAuthoring.Editor
             foreach(var window in Resources.FindObjectsOfTypeAll<PortableMapAuthoringWindow>()) window.SelectMap(root);
             return root;
         }
+        [MenuItem("Tanuki/Components/Point Light",priority=22)] static void PointLightMenu()=>AddLight(PortableMapLight.Shape.Point);
+        [MenuItem("Tanuki/Components/Spot Light",priority=23)] static void SpotLightMenu()=>AddLight(PortableMapLight.Shape.Spot);
+        [MenuItem("Tanuki/Components/Directional Light",priority=24)] static void DirectionalLightMenu()=>AddLight(PortableMapLight.Shape.Directional);
+        public static PortableMapLight AddLight(PortableMapLight.Shape shape)
+        {
+            var root=CurrentMap();if(!root)throw new InvalidOperationException("Select a map first.");
+            var go=new GameObject(shape+" Light");go.transform.SetParent(root.transform,false);go.transform.localPosition=Vector3.up*3;
+            var light=go.AddComponent<PortableMapLight>();light.shape=shape;light.Refresh();Undo.RegisterCreatedObjectUndo(go,"Add Map Light");Selection.activeGameObject=go;return light;
+        }
         public PortablePlayerStart AddPlayerStart() => AddPlayerStart(map);
         public static PortablePlayerStart AddPlayerStart(PortableMapRoot root)
         {
@@ -204,6 +213,10 @@ namespace Radbot.MapAuthoring.Editor
         }
         void OnGUI()
         {
+            if(GUILayout.Button("Material Editor"))PortableMapMaterialEditor.Open();
+            using(new EditorGUI.DisabledScope(!map||EditorApplication.isPlayingOrWillChangePlaymode))
+                if(GUILayout.Button("Play in Tanuki")){PortableGameplayPreviewEditor.Play(map,out message);Repaint();}
+            if(GUILayout.Button("Choose Tanuki Preview"))PortableGameplayPreviewEditor.Configure();
             scroll=EditorGUILayout.BeginScrollView(scroll);EditorGUILayout.Space(8);
             using(new EditorGUI.DisabledScope(busy||EditorApplication.isPlayingOrWillChangePlaymode||PortableMapWorkshopPublisher.IsPending))
             {
