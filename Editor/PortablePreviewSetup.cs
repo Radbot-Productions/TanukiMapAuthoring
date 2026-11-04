@@ -12,10 +12,24 @@ namespace Radbot.MapAuthoring.Editor
             if(!selected) foreach(var root in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects()) {selected=root.GetComponent<PortableMapRoot>();if(selected)break;}
             if(selected) Selection.activeGameObject=Ensure(selected).gameObject;
         }
+        static void EnsureReferences(PortableMapRoot map)
+        {
+            if(map.transform.Find("Character Scale References"))return;
+            var group=new GameObject("Character Scale References");group.transform.SetParent(map.transform,false);group.AddComponent<PortableMapPreviewReference>();
+            string[] names={"Tanuki","Tengu"};
+            for(int i=0;i<names.Length;i++)
+            {
+                var prefab=AssetDatabase.LoadAssetAtPath<GameObject>("Packages/com.radbot.tanuki-map-authoring/Runtime/References/"+names[i]+".fbx");
+                if(!prefab)throw new System.InvalidOperationException("Missing character scale reference: "+names[i]);
+                var copy=(GameObject)PrefabUtility.InstantiatePrefab(prefab,group.transform);copy.name=names[i]+" (scale reference)";copy.transform.localPosition=new Vector3(-3+i*3,0,-5);
+                foreach(var animator in copy.GetComponentsInChildren<Animator>())animator.enabled=false;
+            }
+        }
         public static PortablePreviewPlayer Ensure(PortableMapRoot map)
         {
-            bool light=false;foreach(var sceneRoot in map.gameObject.scene.GetRootGameObjects()) if(sceneRoot.GetComponentInChildren<Light>()) light=true;
-            if(!light){var sun=new GameObject("Preview Light").AddComponent<Light>();UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(sun.gameObject,map.gameObject.scene);sun.type=LightType.Directional;sun.intensity=1;sun.transform.rotation=Quaternion.Euler(50,-30,0);RenderSettings.ambientMode=UnityEngine.Rendering.AmbientMode.Flat;RenderSettings.ambientLight=new Color(.65f,.65f,.65f);}
+            var lighting=map.GetComponent<PortableMapBaseLighting>()??map.gameObject.AddComponent<PortableMapBaseLighting>();lighting.Refresh();
+            if(!map.GetComponent<PortableMapSkybox>())map.gameObject.AddComponent<PortableMapSkybox>();
+            EnsureReferences(map);
             foreach(var root in map.gameObject.scene.GetRootGameObjects())
                 foreach(var player in root.GetComponentsInChildren<PortablePreviewPlayer>(true)) if(player.map==map) return player;
             var go=new GameObject("Player Character");UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(go,map.gameObject.scene);

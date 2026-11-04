@@ -11,23 +11,26 @@ namespace Radbot.MapAuthoring.Editor
     public static class PortableMapMaterials
     {
         public enum Profile { PBR, Emissive, Cutout, Transparent }
-        public static readonly string[] TextureProperties={"_MainTex","_BaseMap","_BumpMap","_MetallicGlossMap","_OcclusionMap","_EmissionMap"};
+        public static readonly Profile[] SurfaceProfiles={Profile.PBR,Profile.Cutout,Profile.Transparent};
+        public static bool HasEmission(Material material)=>IsTanuki(material)?material.HasProperty("_EmissionEnabled")&&material.GetFloat("_EmissionEnabled")>.5f:material.IsKeywordEnabled("_EMISSION");
+        public static readonly string[] TextureProperties={"_MainTex","_BaseMap","_BumpMap","_MetallicGlossMap","_MetallicRoughnessMap","_OcclusionMap","_EmissionMap"};
+        public static bool IsTanuki(Material material)=>material&&material.shader&&Enum.GetNames(typeof(Profile)).Any(p=>material.shader.name=="Tanuki/"+p||material.shader.name=="Tanuki/URP/"+p);
         public static bool HasTextures(Material material)=>TextureProperties.Any(p=>material.HasProperty(p)&&material.GetTexture(p));
         public static Profile Classify(Material material)
         {
+            if(IsTanuki(material)){var profile=(Profile)Enum.Parse(typeof(Profile),material.shader.name.Split('/').Last());return profile==Profile.Emissive?Profile.PBR:profile;}
             float mode=material.HasProperty("_Surface")?material.GetFloat("_Surface"):material.HasProperty("_Mode")?material.GetFloat("_Mode"):0;
             string renderType=material.GetTag("RenderType",true,"");
             if(mode>=2 || (material.HasProperty("_Surface")&&mode>0)||renderType=="Transparent")return Profile.Transparent;
             if(material.IsKeywordEnabled("_ALPHATEST_ON")||renderType=="TransparentCutout")return Profile.Cutout;
             bool stock=material.shader&&(material.shader.name=="Standard"||material.shader.name=="Universal Render Pipeline/Lit");
-            if((!stock||material.IsKeywordEnabled("_EMISSION"))&&material.HasProperty("_EmissionColor")&&material.GetColor("_EmissionColor").maxColorComponent>.00001f)return Profile.Emissive;
             return Profile.PBR;
         }
         public static void Validate(Material material)
         {
             if(!material || !material.shader)throw new InvalidOperationException("Missing map material.");
             string shader=material.shader.name;
-            if(shader!="Standard"&&shader!="Universal Render Pipeline/Lit")throw new InvalidOperationException("Material '"+material.name+"' uses unsupported shader '"+shader+"'. Use Tanuki material presets or Repair Materials.");
+            if(!IsTanuki(material)&&shader!="Standard"&&shader!="Universal Render Pipeline/Lit")throw new InvalidOperationException("Material '"+material.name+"' uses unsupported shader '"+shader+"'. Use Tanuki material presets or Repair Materials.");
             foreach(string keyword in new[]{"_PARALLAXMAP","_DETAIL_MULX2","_DETAIL_SCALED","_SPECULAR_SETUP","_RECEIVE_SHADOWS_OFF","_SPECULARHIGHLIGHTS_OFF","_ENVIRONMENTREFLECTIONS_OFF"})
                 if(material.IsKeywordEnabled(keyword))throw new InvalidOperationException("Material '"+material.name+"' uses unsupported "+keyword+". Use Repair Materials.");
             if(material.HasProperty("_Cull")&&material.GetFloat("_Cull")!=2)throw new InvalidOperationException("Use back-face culling on portable material '"+material.name+"'.");
@@ -38,29 +41,46 @@ namespace Radbot.MapAuthoring.Editor
             {
                 var color=material.GetColor(property);
                 if(new[]{color.r,color.g,color.b,color.a}.Any(v=>float.IsNaN(v)||float.IsInfinity(v)||v<0))throw new InvalidOperationException("Invalid color on portable material: "+material.name);
+                if(property!="_EmissionColor"&&new[]{color.r,color.g,color.b,color.a}.Any(v=>v>1))throw new InvalidOperationException("Base color and opacity must be within 0–1: "+material.name);
             }
-            foreach(string property in new[]{"_Metallic",material.HasProperty("_Smoothness")?"_Smoothness":"_Glossiness","_Cutoff","_OcclusionStrength"})
+            foreach(string property in new[]{"_Metallic",IsTanuki(material)?"_Roughness":material.HasProperty("_Smoothness")?"_Smoothness":"_Glossiness","_Cutoff","_OcclusionStrength"})
                 if(material.HasProperty(property)){float value=material.GetFloat(property);if(float.IsNaN(value)||float.IsInfinity(value)||value<0||value>1)throw new InvalidOperationException("Material value must be within 0–1: "+material.name+" / "+property);}
-            if(profile!=Profile.Emissive&&material.IsKeywordEnabled("_EMISSION")&&material.GetColor("_EmissionColor").maxColorComponent>.00001f)
-                throw new InvalidOperationException("Emission requires the opaque Emissive profile: "+material.name);
+            if(profile!=Profile.PBR&&HasEmission(material))throw new InvalidOperationException("Emission is supported on the PBR surface: "+material.name);
+            if(material.HasProperty("_EmissionStrength")&&(!float.IsFinite(material.GetFloat("_EmissionStrength"))||material.GetFloat("_EmissionStrength")<0))throw new InvalidOperationException("Emission strength must be finite and non-negative: "+material.name);
             if(material.HasProperty("_WorkflowMode")&&material.GetFloat("_WorkflowMode")!=1)throw new InvalidOperationException("Use metallic/roughness workflow: "+material.name);
             if(material.HasProperty("_SmoothnessTextureChannel")&&material.GetFloat("_SmoothnessTextureChannel")!=0)throw new InvalidOperationException("Use metallic texture alpha for smoothness: "+material.name);
             foreach(string property in TextureProperties)
                 if(material.HasProperty(property)&&material.GetTexture(property) is Texture texture &&
                     (texture.dimension!=TextureDimension.Tex2D||texture.width>8192||texture.height>8192))throw new InvalidOperationException("Use 2D textures up to 8192 pixels: "+material.name+" / "+property);
+            if(material.HasProperty("_BumpScale")&&(!float.IsFinite(material.GetFloat("_BumpScale"))||material.GetFloat("_BumpScale")<0))throw new InvalidOperationException("Normal strength must be finite and non-negative: "+material.name);
+            foreach(string property in new[]{"_MetallicRoughnessMap","_MetallicGlossMap","_OcclusionMap"})
+                if(material.HasProperty(property)&&material.GetTexture(property) is Texture data&&AssetImporter.GetAtPath(AssetDatabase.GetAssetPath(data)) is TextureImporter importer&&importer.sRGBTexture)
+                    throw new InvalidOperationException("Disable sRGB (Color Texture) on material data image '"+data.name+"' before export: "+property);
         }
         public static Material Create(Profile profile)
         {
+            bool emission=profile==Profile.Emissive;profile=emission?Profile.PBR:profile;
             bool urp=GraphicsSettings.currentRenderPipeline;
-            var shader=Shader.Find(urp?"Universal Render Pipeline/Lit":"Standard");
+            var shader=TanukiMaterialShaders.Find(profile,urp);
             if(!shader)throw new InvalidOperationException("Tanuki materials require Built-in or Universal Render Pipeline.");
             var material=new Material(shader){name="Tanuki "+profile};
-            material.SetColor(urp?"_BaseColor":"_Color",profile==Profile.Transparent?new Color(.6f,.8f,1,.4f):new Color(.6f,.6f,.6f,1));
-            material.SetFloat("_Metallic",0);material.SetFloat(urp?"_Smoothness":"_Glossiness",.3f);
-            Configure(material,profile);return material;
+            material.SetColor("_Color",profile==Profile.Transparent?new Color(.6f,.8f,1,.4f):new Color(.6f,.6f,.6f,1));
+            material.SetFloat("_Metallic",0);material.SetFloat("_Roughness",.7f);
+            Configure(material,emission?Profile.Emissive:profile);return material;
         }
         public static void Configure(Material material,Profile profile)
         {
+            if(IsTanuki(material))
+            {
+                bool emission=profile==Profile.Emissive;profile=emission?Profile.PBR:profile;
+                material.shader=TanukiMaterialShaders.Find(profile,material.shader.name.StartsWith("Tanuki/URP/",StringComparison.Ordinal));
+                material.SetOverrideTag("TanukiProfile",profile.ToString());
+                material.renderQueue=profile==Profile.Transparent?3000:profile==Profile.Cutout?2450:2000;
+                if(material.HasProperty("_EmissionEnabled"))material.SetFloat("_EmissionEnabled",emission?1:0);
+                material.SetColor("_EmissionColor",emission?Color.white:Color.black);
+                material.globalIlluminationFlags=emission?MaterialGlobalIlluminationFlags.BakedEmissive:MaterialGlobalIlluminationFlags.EmissiveIsBlack;
+                return;
+            }
             bool urp=material.HasProperty("_Surface"),blend=profile==Profile.Transparent,cutout=profile==Profile.Cutout;
             material.SetOverrideTag("TanukiProfile",profile.ToString());
             material.SetOverrideTag("RenderType",blend?"Transparent":cutout?"TransparentCutout":"Opaque");
@@ -75,17 +95,10 @@ namespace Radbot.MapAuthoring.Editor
             if(profile==Profile.Emissive){material.EnableKeyword("_EMISSION");material.SetColor("_EmissionColor",Color.white);material.globalIlluminationFlags=MaterialGlobalIlluminationFlags.BakedEmissive;}
             else {material.SetColor("_EmissionColor",Color.black);material.globalIlluminationFlags=MaterialGlobalIlluminationFlags.EmissiveIsBlack;}
         }
-        [MenuItem("Tanuki/Materials/Create Material Presets")]
-        public static void CreatePresets()
-        {
-            const string folder="Assets/TanukiMaps/Materials";
-            Directory.CreateDirectory(folder);AssetDatabase.Refresh();
-            foreach(Profile profile in Enum.GetValues(typeof(Profile)))
-            {
-                string path=folder+"/Tanuki "+profile+".mat";
-                if(!AssetDatabase.LoadAssetAtPath<Material>(path))AssetDatabase.CreateAsset(Create(profile),path);
-            }
-        }
+        public static void CreatePresets(){Selection.activeObject=TanukiMaterialShaders.Sample(Profile.PBR);EditorGUIUtility.PingObject(Selection.activeObject);}
+        [MenuItem("Tanuki/Materials/PBR")]static void NewPbr()=>TanukiMaterialShaders.CreateCopy(Profile.PBR);
+        [MenuItem("Tanuki/Materials/Cutout")]static void NewCutout()=>TanukiMaterialShaders.CreateCopy(Profile.Cutout);
+        [MenuItem("Tanuki/Materials/Transparent")]static void NewTransparent()=>TanukiMaterialShaders.CreateCopy(Profile.Transparent);
         public static string Repair(PortableMapRoot root)
         {
             if(!root)throw new InvalidOperationException("Select a map first.");

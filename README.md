@@ -187,6 +187,23 @@ redistributable and is not relicensed as Tanuki code.
 
 ### Preview movement
 
+Choose **Tanuki > Materials > PBR / Cutout / Transparent** to create an editable
+sample copy in the selected Project folder. Shader definitions and sample materials
+live in the plugin under `Shaders` and `Runtime/Materials`. Use Unity's normal
+Material Inspector: the shader is **Tanuki/PBR**, **Tanuki/Cutout**, or
+**Tanuki/Transparent**, with only portable inputs. PBR includes optional emission.
+Roughness is exposed directly; metallic/roughness maps use green for roughness and
+blue for metallic, multiplied by their scalar factors. Disable sRGB for those maps
+and AO, and import normal images as Normal Map. Colors/scalars work without maps.
+No separate material window or preview rebuild is required.
+
+The tested editor is Unity **6000.6.7f1**. Built-in rendering uses the core package.
+URP projects also install `Integrations~/URP/package.json` as a package from disk;
+its **Tanuki Materials for URP** shaders remain inside that plugin, rather than
+being generated in project Assets. Legacy Standard/URP Lit materials still export;
+**Tanuki > Materials > Use Tanuki Shaders on Selected Map** converts their supported
+inputs to the dedicated shaders.
+
 New/Open adds a separate **Player Character** object. Select Third Person or
 Free Camera in its Inspector, or press F during Play. WASD moves; Space jumps (hold to glide);
 Shift runs or releases climbing. Free Camera uses Q/E vertically and Shift to
@@ -205,3 +222,14 @@ corner following and top-out. It approximates object-form movement, without
 wall jumps or sculpted-body collision. Use Unreal for final traversal checks.
 The helper and all descendants are excluded from exports and thumbnails.
 Unity's Input Manager must be enabled (Legacy or Both).
+
+For actual game behavior, use **Play in Tanuki** in the map editor window.
+**Choose Tanuki Preview** selects `TanukiMapPreview.exe` from the shared Windows
+gameplay package. It exports a temporary snapshot and launches the production
+Tanuki pawn, movement, climbing, gliding and camera. The Unity-native helper
+described above remains an approximate local blockout tool.
+
+Escape opens Resume, Free Camera / Tanuki Movement, Restart at Spawn, Settings
+and Exit Preview. Free camera uses WASD, Q/E, mouse look and Shift for speed.
+Closing the player removes its temporary map snapshot. No Unreal editor install
+is required. The same gameplay package is used by Blender, Godot and Unreal.

@@ -26,12 +26,10 @@ namespace Radbot.MapAuthoring.Editor
             if(Directory.Exists(folder)) throw new InvalidOperationException("Sample folder already exists without its scene: "+folder);
             Directory.CreateDirectory(folder);AssetDatabase.Refresh();
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);
-            var shader=Shader.Find(GraphicsSettings.currentRenderPipeline?"Universal Render Pipeline/Lit":"Standard");
-            if(!shader) throw new InvalidOperationException("Samples require Built-in or Universal Render Pipeline.");
             Func<string,Color,Material> material=(name,color)=>
             {
-                var result=new Material(shader){name=name,color=color};
-                result.SetFloat(result.HasProperty("_Smoothness")?"_Smoothness":"_Glossiness",0);
+                var result=PortableMapMaterials.Create(PortableMapMaterials.Profile.PBR);result.name=name;result.color=color;
+                result.SetFloat("_Roughness",1);
                 AssetDatabase.CreateAsset(result,folder+"/"+name+".mat");return result;
             };
             var floorMaterial=material("Floor",new Color(.55f,.55f,.55f));
@@ -65,7 +63,7 @@ namespace Radbot.MapAuthoring.Editor
                 cylinder.GetComponent<Renderer>().sharedMaterial=objectMaterial;
                 Object.DestroyImmediate(cylinder.GetComponent<Collider>());cylinder.AddComponent<MeshCollider>().sharedMesh=cylinder.GetComponent<MeshFilter>().sharedMesh;
             }
-            var boundary=root.GetComponentInChildren<PortableMapBoundary>();boundary.transform.localPosition=Vector3.up*4;boundary.transform.localScale=new Vector3(side,8,side);
+            var boundary=root.GetComponentInChildren<PortableMapBoundary>();boundary.transform.localPosition=Vector3.up*3.875f;boundary.transform.localScale=new Vector3(side,8.25f,side);
             foreach(var p in new[]{new Vector3(-2,1,-4),new Vector3(2,1,-4),new Vector3(-4,1,0),new Vector3(4,1,0)})
             {var go=new GameObject("Player Start");go.transform.SetParent(root.transform,false);go.transform.localPosition=p;go.AddComponent<PortablePlayerStart>();}
             var sun=new GameObject("Preview Light").AddComponent<Light>();sun.type=LightType.Directional;sun.intensity=1;sun.transform.rotation=Quaternion.Euler(50,-30,0);

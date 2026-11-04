@@ -50,6 +50,19 @@ namespace Radbot.MapAuthoring.Editor
         {var window=Show(workshop?Page.Publish:Page.Export);window.SelectMap(root);window.createWorkshopItem=!root || string.IsNullOrEmpty(root.workshopItemId);window.updateItem=root?root.workshopItemId:"";}
         public static void ShowFileExport(PortableMapRoot root)
         {var window=Show(Page.Export);window.SelectMap(root);window.AfterGUI(window.ExportFileDialog);}
+        [MenuItem("Tanuki/Components/Skybox",priority=26)]
+        static void SkyboxMenu()
+        {
+            var map=CurrentMap();if(!map)return;
+            Selection.activeObject=map.GetComponent<PortableMapSkybox>()??Undo.AddComponent<PortableMapSkybox>(map.gameObject);
+        }
+        [MenuItem("Tanuki/Components/Lighting Settings",priority=25)]
+        static void LightingSettingsMenu()
+        {
+            var map=CurrentMap();if(!map)return;
+            var settings=map.GetComponent<PortableMapBaseLighting>()??Undo.AddComponent<PortableMapBaseLighting>(map.gameObject);
+            Selection.activeObject=settings;
+        }
         static PortableMapRoot CurrentMap()
         {
             var selected=Selection.activeGameObject?Selection.activeGameObject.GetComponentInParent<PortableMapRoot>():null;
@@ -72,8 +85,10 @@ namespace Radbot.MapAuthoring.Editor
         }
         public static PortableMapBoundary CreateBoundary(PortableMapRoot root)
         {
+            var existing=root.GetComponentInChildren<PortableMapBoundary>(true);
+            if(existing){Selection.activeGameObject=existing.gameObject;return existing;}
             var go=new GameObject("Map Boundary");go.transform.SetParent(root.transform,false);
-            go.transform.localPosition=Vector3.up*10;go.transform.localScale=new Vector3(60,20,60);
+            go.transform.localPosition=Vector3.up*9.875f;go.transform.localScale=new Vector3(60,20.25f,60);
             var result=go.AddComponent<PortableMapBoundary>();Undo.RegisterCreatedObjectUndo(go,"Create Map Boundary");Selection.activeGameObject=go;return result;
         }
         public static PortableMapRoot CreateMapRoot()
@@ -86,6 +101,15 @@ namespace Radbot.MapAuthoring.Editor
             Selection.activeGameObject=go;
             foreach(var window in Resources.FindObjectsOfTypeAll<PortableMapAuthoringWindow>()) window.SelectMap(root);
             return root;
+        }
+        [MenuItem("Tanuki/Components/Point Light",priority=22)] static void PointLightMenu()=>AddLight(PortableMapLight.Shape.Point);
+        [MenuItem("Tanuki/Components/Spot Light",priority=23)] static void SpotLightMenu()=>AddLight(PortableMapLight.Shape.Spot);
+        [MenuItem("Tanuki/Components/Directional Light",priority=24)] static void DirectionalLightMenu()=>AddLight(PortableMapLight.Shape.Directional);
+        public static PortableMapLight AddLight(PortableMapLight.Shape shape)
+        {
+            var root=CurrentMap();if(!root)throw new InvalidOperationException("Select a map first.");
+            var go=new GameObject(shape+" Light");go.transform.SetParent(root.transform,false);go.transform.localPosition=Vector3.up*3;
+            var light=go.AddComponent<PortableMapLight>();light.shape=shape;light.Refresh();Undo.RegisterCreatedObjectUndo(go,"Add Map Light");Selection.activeGameObject=go;return light;
         }
         public PortablePlayerStart AddPlayerStart() => AddPlayerStart(map);
         public static PortablePlayerStart AddPlayerStart(PortableMapRoot root)
@@ -155,20 +179,12 @@ namespace Radbot.MapAuthoring.Editor
         }
         public bool CreateEmptyMap() => Run(()=>
         {
-            PortableMapMaterials.CreatePresets();
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);var root=CreateMapRoot();
-            var boundary=root.GetComponentInChildren<PortableMapBoundary>();boundary.transform.localPosition=Vector3.up*4;boundary.transform.localScale=new Vector3(20,8,20);
+            var boundary=root.GetComponentInChildren<PortableMapBoundary>();boundary.transform.localPosition=Vector3.up*3.875f;boundary.transform.localScale=new Vector3(20,8.25f,20);
             var floor=GameObject.CreatePrimitive(PrimitiveType.Cube);floor.name="Floor";floor.transform.SetParent(root.transform,false);floor.transform.localPosition=new Vector3(0,-.1f,0);floor.transform.localScale=new Vector3(20,.2f,20);
-            var material=AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath("c01982de45bc4e16bb81b76c58659841"));
-            if(!material) throw new InvalidOperationException("Reinstall the Tanuki toolkit: its default floor material is missing.");
-            if(UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline)
-            {
-                var shader=Shader.Find("Universal Render Pipeline/Lit");if(!shader)throw new InvalidOperationException("Use a Built-in or Universal Render Pipeline project.");
-                material=new Material(shader){name="Floor"};material.SetColor("_BaseColor",new Color(.5f,.55f,.6f));material.SetFloat("_Metallic",0);material.SetFloat("_Smoothness",.3f);material.DisableKeyword("_EMISSION");
-                if(!AssetDatabase.IsValidFolder("Assets/TanukiMaps"))AssetDatabase.CreateFolder("Assets","TanukiMaps");
-                if(!AssetDatabase.IsValidFolder("Assets/TanukiMaps/Materials"))AssetDatabase.CreateFolder("Assets/TanukiMaps","Materials");
-                AssetDatabase.CreateAsset(material,AssetDatabase.GenerateUniqueAssetPath("Assets/TanukiMaps/Materials/Floor.mat"));
-            }
+            var material=PortableMapMaterials.Create(PortableMapMaterials.Profile.PBR);material.name="Floor";material.color=new Color(.5f,.55f,.6f);
+            Directory.CreateDirectory("Assets/TanukiMaps/Materials");AssetDatabase.Refresh();
+            AssetDatabase.CreateAsset(material,AssetDatabase.GenerateUniqueAssetPath("Assets/TanukiMaps/Materials/Floor.mat"));
             floor.GetComponent<Renderer>().sharedMaterial=material;
             for(int i=0;i<4;i++){var start=AddPlayerStart(root);start.transform.localPosition=new Vector3((i-1.5f)*2,1,0);}
             PortablePreviewSetup.Ensure(root);SelectMap(root);Selection.activeGameObject=root.gameObject;
@@ -185,6 +201,7 @@ namespace Radbot.MapAuthoring.Editor
                 template=CurrentMap();
             }
             if(!template) return;
+            TanukiMaterialShaders.ConvertMap(template);
             string folder=ImportFolder(courtyard?"Courtyard":"Room");Directory.CreateDirectory(folder);AssetDatabase.Refresh();
             if(!EditorSceneManager.SaveScene(template.gameObject.scene,folder+"/Map.unity")) throw new IOException("Could not create the map scene.");
             template.mapId=Guid.NewGuid().ToString("N");template.mapName=courtyard?"Courtyard":"Room";
@@ -204,6 +221,9 @@ namespace Radbot.MapAuthoring.Editor
         }
         void OnGUI()
         {
+            using(new EditorGUI.DisabledScope(!map||EditorApplication.isPlayingOrWillChangePlaymode))
+                if(GUILayout.Button("Play in Tanuki")){PortableGameplayPreviewEditor.Play(map,out message);Repaint();}
+            if(GUILayout.Button("Choose Tanuki Preview"))PortableGameplayPreviewEditor.Configure();
             scroll=EditorGUILayout.BeginScrollView(scroll);EditorGUILayout.Space(8);
             using(new EditorGUI.DisabledScope(busy||EditorApplication.isPlayingOrWillChangePlaymode||PortableMapWorkshopPublisher.IsPending))
             {

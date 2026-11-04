@@ -42,7 +42,7 @@ namespace Radbot.MapAuthoring
         Vector3 normal,wallUp=Vector3.up,topTarget;
         bool toppingOut;
 
-        public static bool IsPreview(Transform target) => target && target.GetComponentInParent<PortablePreviewPlayer>();
+        public static bool IsPreview(Transform target) => target && (target.GetComponentInParent<PortablePreviewPlayer>() || target.GetComponentInParent<PortableMapPreviewReference>());
         public void InitializePreview()
         {
             // Upgrade the original preview defaults without replacing custom tuning.

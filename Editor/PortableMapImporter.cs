@@ -25,11 +25,14 @@ namespace Radbot.MapAuthoring.Editor
             public Marker[] markers;
             public PortableMapAuthoringData authoring;
             public Boundary boundary;
+            public MapLight[] lights;
+            public string baseLighting;
         }
         [Serializable] public sealed class Entry {public string id; public int mesh; public bool visible,collision;}
         [Serializable] public sealed class Primitive {public string id,type; public float[] position,rotation,size; public float radius,halfHeight;}
         [Serializable] public sealed class Marker {public string id,type,spawnTag; public float[] position,rotation;}
         [Serializable] public sealed class Boundary {public string id,shape; public float[] position,rotation,size;}
+        [Serializable] public sealed class MapLight {public string id,type;public float[] position,rotation,color;public float intensity,range,innerCone,outerCone;public bool shadows;}
         [Serializable] sealed class Document {public GMesh[] meshes; public Accessor[] accessors; public View[] bufferViews; public GMaterial[] materials; public Image[] images; public Texture[] textures; public Sampler[] samplers;public Buffer[] buffers;public string[] extensionsUsed;}
         [Serializable] sealed class Buffer {public int byteLength; public string uri;}
         [Serializable] sealed class GMesh {public string name; public Part[] primitives;}
@@ -73,8 +76,18 @@ namespace Radbot.MapAuthoring.Editor
                     var size=V(m.boundary.size);V(m.boundary.position);Q(m.boundary.rotation);
                     Require(size.x>0 && size.y>0 && size.z>0 && (m.boundary.shape!="cylinder"||Mathf.Abs(size.x-size.z)<.001f),"Invalid map boundary dimensions.");
                 }
-                Require(m!=null && (m.schemaVersion==1||m.schemaVersion==2) && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
-                if(m.schemaVersion==2) Require(m.boundary!=null && m.markers!=null && m.markers.Length>=4,"A playable map requires a boundary and four player starts.");
+                Require(m!=null && (m.schemaVersion==1||m.schemaVersion==2||m.schemaVersion==3||m.schemaVersion==4) && !string.IsNullOrWhiteSpace(m.mapId) && m.mapId.Length<=128,"Unsupported map manifest.");
+                if(m.schemaVersion>=2) Require(m.boundary!=null && m.markers!=null && m.markers.Length>=4,"A playable map requires a boundary and four player starts.");
+                if(m.schemaVersion>=3)Require(m.lights!=null,"Light schema requires a lights array.");
+                if(m.schemaVersion==4)Require(m.baseLighting=="cartoon-street-day"||m.baseLighting=="cartoon-street-night","Unsupported base lighting profile.");
+                m.lights=m.lights??Array.Empty<MapLight>();
+                Require(m.lights.Length<=256 && (m.lights.Length==0 || m.schemaVersion>=3),"Invalid light count or schema.");
+                foreach(var l in m.lights)
+                {
+                    V(l.position);Q(l.rotation);
+                    Require((l.type=="point"||l.type=="spot"||l.type=="directional") && l.color!=null && l.color.Length==3 && l.color.All(v=>Finite(v)&&v>=0&&v<=1) &&
+                        Finite(l.intensity)&&l.intensity>=0&&Finite(l.range)&&l.range>0&&Finite(l.innerCone)&&Finite(l.outerCone)&&l.innerCone>=0&&l.innerCone<=l.outerCone&&l.outerCone>0&&l.outerCone<90,"Invalid portable light.");
+                }
                 Require(m.meshes!=null && m.meshes.Length>0 && m.meshes.Length<=10000 && m.colliders!=null && m.colliders.Length<=10000 && m.markers!=null && m.markers.Length>0 && m.markers.Length<=10000,"Invalid map entry counts.");
                 foreach(var c in m.colliders)
                 {
@@ -85,7 +98,7 @@ namespace Radbot.MapAuthoring.Editor
                     else throw new InvalidDataException("Unsupported collider type.");
                 }
                 foreach(var marker in m.markers) {V(marker.position); Q(marker.rotation); Require(marker.type=="playerStart" && marker.spawnTag!=null && marker.spawnTag.Length<=128,"Unsupported marker.");}
-                var ids=m.meshes.Select(e=>e.id).Concat(m.colliders.Select(e=>e.id)).Concat(m.markers.Select(e=>e.id)).ToArray();
+                var ids=m.meshes.Select(e=>e.id).Concat(m.colliders.Select(e=>e.id)).Concat(m.markers.Select(e=>e.id)).Concat(m.lights.Select(e=>e.id)).ToArray();
                 Require(ids.All(id=>!string.IsNullOrEmpty(id) && id.Length<=128) && ids.Distinct().Count()==ids.Length,"Duplicate or invalid map entry IDs.");
                 byte[] glb=r.ReadBytes(g);
                 using(var sha=SHA1.Create()) Require(string.Equals(BitConverter.ToString(sha.ComputeHash(glb)).Replace("-",""),m.sceneSha1,StringComparison.OrdinalIgnoreCase),"Map geometry checksum mismatch.");
@@ -165,6 +178,7 @@ namespace Radbot.MapAuthoring.Editor
             var root=rootObject.AddComponent<PortableMapRoot>(); root.mapId=fork ? Guid.NewGuid().ToString("N") : m.mapId;
             foreach(var initial in root.GetComponentsInChildren<PortableMapBoundary>(true)) Object.DestroyImmediate(initial.gameObject);
             root.mapName=Path.GetFileName(folder);
+            (root.GetComponent<PortableMapBaseLighting>()??root.gameObject.AddComponent<PortableMapBaseLighting>()).SetKey(m.baseLighting??"cartoon-street-day");
             var nodes=new List<Transform>(); var bindings=new Dictionary<string,PortableMapAuthoringData.Binding>();
             if(m.authoring!=null)
             {
@@ -178,7 +192,7 @@ namespace Radbot.MapAuthoring.Editor
                     t.name=n.name; t.localPosition=i==0 ? Vector3.zero : n.position; t.localRotation=i==0 ? Quaternion.identity : n.rotation.normalized; t.localScale=i==0 ? Vector3.one : n.scale; nodes.Add(t);
                 }
                 foreach(var b in a.bindings) {Require(b!=null && b.id!=null && !bindings.ContainsKey(b.id) && b.node>=0 && b.node<nodes.Count && Finite(b.center) && Finite(b.size) && Finite(b.radius) && Finite(b.height),"Invalid authoring binding."); bindings.Add(b.id,b);}
-                var ids=m.meshes.Select(e=>e.id).Concat(m.colliders.Select(e=>e.id)).Concat(m.markers.Select(e=>e.id)).Concat(m.boundary!=null?new[]{m.boundary.id}:Array.Empty<string>()).ToArray();
+                var ids=m.meshes.Select(e=>e.id).Concat(m.colliders.Select(e=>e.id)).Concat(m.markers.Select(e=>e.id)).Concat(m.lights.Select(e=>e.id)).Concat(m.boundary!=null?new[]{m.boundary.id}:Array.Empty<string>()).ToArray();
                 Require(bindings.Count==ids.Length && ids.All(bindings.ContainsKey),"Authoring metadata does not match map content.");
             }
             Transform Owner(string id,string name)
@@ -226,6 +240,13 @@ namespace Radbot.MapAuthoring.Editor
                 if(!bindings.ContainsKey(marker.id)) {t.localPosition=V(marker.position); t.localRotation=Q(marker.rotation);}
                 Require(!t.GetComponent<PortablePlayerStart>(),"Duplicate player start component.");
                 t.gameObject.AddComponent<PortablePlayerStart>().spawnTag=marker.spawnTag;
+            }
+            foreach(var l in m.lights)
+            {
+                var t=Owner(l.id,l.type+" light");
+                if(!bindings.ContainsKey(l.id)){t.localPosition=V(l.position);t.localRotation=Q(l.rotation);}
+                var light=t.gameObject.AddComponent<PortableMapLight>();light.shape=l.type=="point"?PortableMapLight.Shape.Point:l.type=="spot"?PortableMapLight.Shape.Spot:PortableMapLight.Shape.Directional;
+                light.color=new Color(l.color[0],l.color[1],l.color[2]).gamma;light.intensity=l.intensity;light.range=l.range*.01f;light.innerCone=l.innerCone;light.outerCone=l.outerCone;light.shadows=l.shadows;light.Refresh();
             }
             if(m.boundary!=null)
             {
@@ -344,7 +365,7 @@ namespace Radbot.MapAuthoring.Editor
                 var material=PortableMapMaterials.Create(profile);material.name=source.name??"Imported material";
                 var f=pbr.baseColorFactor; var color=new Color(f[0],f[1],f[2],f[3]).gamma;
                 material.SetColor(material.HasProperty("_BaseColor") ? "_BaseColor" : "_Color",color); material.SetFloat("_Metallic",pbr.metallicFactor);
-                material.SetFloat(material.HasProperty("_Smoothness") ? "_Smoothness" : "_Glossiness",1-pbr.roughnessFactor);
+                material.SetFloat("_Roughness",pbr.roughnessFactor);
                 Vector2? commonScale=null,commonOffset=null;
                 void SetTexture(string property,TextureRef reference,string kind="color",float metallic=1,float roughness=1)
                 {
@@ -361,8 +382,7 @@ namespace Radbot.MapAuthoring.Editor
                     material.SetTexture(property,Load(reference,kind,metallic,roughness));
                 }
                 SetTexture(material.HasProperty("_BaseMap")?"_BaseMap":"_MainTex",pbr.baseColorTexture);
-                SetTexture("_MetallicGlossMap",pbr.metallicRoughnessTexture,"metalRough",pbr.metallicFactor,pbr.roughnessFactor);
-                if(pbr.metallicRoughnessTexture!=null){material.EnableKeyword("_METALLICGLOSSMAP");material.SetFloat(material.HasProperty("_Smoothness")?"_Smoothness":"_GlossMapScale",1);}
+                SetTexture("_MetallicRoughnessMap",pbr.metallicRoughnessTexture,"data");
                 SetTexture("_BumpMap",source.normalTexture,"normal");if(source.normalTexture!=null){material.EnableKeyword("_NORMALMAP");material.SetFloat("_BumpScale",source.normalTexture.scale);}
                 SetTexture("_OcclusionMap",source.occlusionTexture,"occlusion");if(source.occlusionTexture!=null)material.SetFloat("_OcclusionStrength",source.occlusionTexture.strength);
                 SetTexture("_EmissionMap",source.emissiveTexture);if(emission)material.SetColor("_EmissionColor",new Color(emissive[0]*emissionStrength,emissive[1]*emissionStrength,emissive[2]*emissionStrength).gamma);

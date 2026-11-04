@@ -23,8 +23,8 @@ namespace Radbot.MapAuthoring
             mapName=gameObject.name;
             var boundary=new GameObject("Map Boundary");
             boundary.transform.SetParent(transform,false);
-            boundary.transform.localPosition=Vector3.up*10;
-            boundary.transform.localScale=new Vector3(60,20,60);
+            boundary.transform.localPosition=Vector3.up*9.875f;
+            boundary.transform.localScale=new Vector3(60,20.25f,60);
             boundary.AddComponent<PortableMapBoundary>();
 #if UNITY_EDITOR
             UnityEditor.Undo.RegisterCreatedObjectUndo(boundary,"Create Map Boundary");
