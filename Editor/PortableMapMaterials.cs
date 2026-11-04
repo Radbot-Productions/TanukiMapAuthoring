@@ -11,6 +11,9 @@ namespace Radbot.MapAuthoring.Editor
     public static class PortableMapMaterials
     {
         public enum Profile { PBR, Emissive, Cutout, Transparent }
+        public const string PackagePath="Packages/com.radbot.tanuki-map-authoring";
+        public static bool IsSupportedShader(string name)=>name=="Standard"||name=="Universal Render Pipeline/Lit"||name=="Tanuki/Portable PBR"||name=="Tanuki/Portable PBR URP";
+        public static bool HasEmission(Material material)=>material&&material.IsKeywordEnabled("_EMISSION")&&material.HasProperty("_EmissionColor")&&material.GetColor("_EmissionColor").maxColorComponent>0;
         public static readonly string[] TextureProperties={"_MainTex","_BaseMap","_BumpMap","_MetallicGlossMap","_OcclusionMap","_EmissionMap"};
         public static bool HasTextures(Material material)=>TextureProperties.Any(p=>material.HasProperty(p)&&material.GetTexture(p));
         public static Profile Classify(Material material)
@@ -29,7 +32,7 @@ namespace Radbot.MapAuthoring.Editor
             if(!material || !material.shader)throw new InvalidOperationException("Missing map material.");
             var definition=PortableMapMaterialDefinition.Find(material);if(definition)definition.ValidateProjection();
             string shader=material.shader.name;
-            if(shader!="Standard"&&shader!="Universal Render Pipeline/Lit")throw new InvalidOperationException("Material '"+material.name+"' uses unsupported shader '"+shader+"'. Use Tanuki material presets or Repair Materials.");
+            if(!IsSupportedShader(shader))throw new InvalidOperationException("Material '"+material.name+"' uses unsupported shader '"+shader+"'. Use Tanuki material presets or Repair Materials.");
             foreach(string keyword in new[]{"_PARALLAXMAP","_DETAIL_MULX2","_DETAIL_SCALED","_SPECULAR_SETUP","_RECEIVE_SHADOWS_OFF","_SPECULARHIGHLIGHTS_OFF","_ENVIRONMENTREFLECTIONS_OFF"})
                 if(material.IsKeywordEnabled(keyword))throw new InvalidOperationException("Material '"+material.name+"' uses unsupported "+keyword+". Use Repair Materials.");
             if(material.HasProperty("_Cull")&&material.GetFloat("_Cull")!=2)throw new InvalidOperationException("Use back-face culling on portable material '"+material.name+"'.");
@@ -54,7 +57,7 @@ namespace Radbot.MapAuthoring.Editor
         public static Material Create(Profile profile)
         {
             bool urp=GraphicsSettings.currentRenderPipeline;
-            var shader=Shader.Find(urp?"Universal Render Pipeline/Lit":"Standard");
+            var shader=Shader.Find(urp?"Tanuki/Portable PBR URP":"Tanuki/Portable PBR");
             if(!shader)throw new InvalidOperationException("Tanuki materials require Built-in or Universal Render Pipeline.");
             var material=new Material(shader){name="Tanuki "+profile};
             material.SetColor(urp?"_BaseColor":"_Color",profile==Profile.Transparent?new Color(.6f,.8f,1,.4f):new Color(.6f,.6f,.6f,1));
@@ -77,16 +80,25 @@ namespace Radbot.MapAuthoring.Editor
             if(profile==Profile.Emissive){material.EnableKeyword("_EMISSION");material.SetColor("_EmissionColor",Color.white);material.globalIlluminationFlags=MaterialGlobalIlluminationFlags.BakedEmissive;}
             else {material.SetColor("_EmissionColor",Color.black);material.globalIlluminationFlags=MaterialGlobalIlluminationFlags.EmissiveIsBlack;}
         }
-        [MenuItem("Tanuki/Materials/Create Material Presets")]
-        public static void CreatePresets()
+        [MenuItem("Tanuki/Materials/PBR",priority=0)] static void CreatePBR()=>CreateAsset(Profile.PBR);
+        [MenuItem("Tanuki/Materials/Cutout",priority=1)] static void CreateCutout()=>CreateAsset(Profile.Cutout);
+        [MenuItem("Tanuki/Materials/Transparent",priority=2)] static void CreateTransparent()=>CreateAsset(Profile.Transparent);
+        public static Material CreateAsset(Profile profile)
         {
-            const string folder="Assets/TanukiMaps/Materials";
-            Directory.CreateDirectory(folder);AssetDatabase.Refresh();
-            foreach(Profile profile in Enum.GetValues(typeof(Profile)))
-            {
-                string path=folder+"/Tanuki "+profile+".mat";
-                if(!AssetDatabase.LoadAssetAtPath<Material>(path))AssetDatabase.CreateAsset(Create(profile),path);
-            }
+            string folder=AssetDatabase.GetAssetPath(Selection.activeObject);
+            if(!AssetDatabase.IsValidFolder(folder))folder=Path.GetDirectoryName(folder)?.Replace('\\','/');
+            if(string.IsNullOrEmpty(folder)||!(folder=="Assets"||folder.StartsWith("Assets/",StringComparison.Ordinal)))folder="Assets";
+            string samplePath=PackagePath+"/Runtime/Materials/Tanuki "+(profile==Profile.Emissive?"PBR":profile.ToString())+".mat";
+            var sample=AssetDatabase.LoadAssetAtPath<Material>(samplePath);
+            if(!sample)throw new InvalidOperationException("The Tanuki plugin sample material is missing: "+samplePath);
+            var material=new Material(sample){name="Tanuki "+profile};
+            if(GraphicsSettings.currentRenderPipeline)material.shader=Shader.Find("Tanuki/Portable PBR URP");
+            if(!material.shader)throw new InvalidOperationException("The Tanuki plugin shader is missing.");
+            Configure(material,profile);
+            string path=AssetDatabase.GenerateUniqueAssetPath(folder+"/"+material.name+".mat");
+            AssetDatabase.CreateAsset(material,path);
+            var inputs=PortableMapMaterialDefinition.Attach(material);inputs.Apply();
+            AssetDatabase.SaveAssetIfDirty(material);Selection.activeObject=material;EditorGUIUtility.PingObject(material);return material;
         }
         public static string Repair(PortableMapRoot root)
         {

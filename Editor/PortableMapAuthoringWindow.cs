@@ -164,7 +164,6 @@ namespace Radbot.MapAuthoring.Editor
         }
         public bool CreateEmptyMap() => Run(()=>
         {
-            PortableMapMaterials.CreatePresets();
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);var root=CreateMapRoot();
             var boundary=root.GetComponentInChildren<PortableMapBoundary>();boundary.transform.localPosition=Vector3.up*4;boundary.transform.localScale=new Vector3(20,8,20);
             var floor=GameObject.CreatePrimitive(PrimitiveType.Cube);floor.name="Floor";floor.transform.SetParent(root.transform,false);floor.transform.localPosition=new Vector3(0,-.1f,0);floor.transform.localScale=new Vector3(20,.2f,20);
@@ -213,7 +212,6 @@ namespace Radbot.MapAuthoring.Editor
         }
         void OnGUI()
         {
-            if(GUILayout.Button("Material Editor"))PortableMapMaterialEditor.Open();
             using(new EditorGUI.DisabledScope(!map||EditorApplication.isPlayingOrWillChangePlaymode))
                 if(GUILayout.Button("Play in Tanuki")){PortableGameplayPreviewEditor.Play(map,out message);Repaint();}
             if(GUILayout.Button("Choose Tanuki Preview"))PortableGameplayPreviewEditor.Configure();

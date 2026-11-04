@@ -362,7 +362,7 @@ namespace Radbot.MapAuthoring.Editor
                 {var normal=(Dictionary<string,object>)Reference(Map("_BumpMap"),"normal");normal["scale"]=material.GetFloat("_BumpScale");result["normalTexture"]=normal;}
                 if(Map("_OcclusionMap"))
                 {var ao=(Dictionary<string,object>)Reference(Map("_OcclusionMap"),"occlusion",material.GetFloat("_OcclusionStrength"));ao["strength"]=1f;result["occlusionTexture"]=ao;}
-                if(profile==PortableMapMaterials.Profile.Emissive)
+                if(inputs?(inputs.surface==PortableMapMaterials.Profile.PBR&&inputs.emissionEnabled):PortableMapMaterials.HasEmission(material))
                 {
                     Color emission=material.GetColor("_EmissionColor").linear;float strength=Mathf.Max(1,emission.maxColorComponent);
                     result["emissiveFactor"]=new[]{emission.r/strength,emission.g/strength,emission.b/strength};
