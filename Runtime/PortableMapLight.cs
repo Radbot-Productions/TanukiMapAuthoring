@@ -22,10 +22,10 @@ namespace Radbot.MapAuthoring
             light.type=shape==Shape.Point?LightType.Point:shape==Shape.Spot?LightType.Spot:LightType.Directional;
             light.color=color;light.range=range;light.spotAngle=outerCone*2;light.innerSpotAngle=innerCone*2;
             light.shadows=shadows?LightShadows.Soft:LightShadows.None;
-            // Normalize physical intensity by the selected base exposure. Built-in
-            // attenuation remains approximate; the shared Tanuki player is authoritative.
+            // Built-in lights stay scene-referred; camera exposure also affects sky/emission.
+            // Local attenuation is still approximate in the built-in renderer.
             var environment=GetComponentInParent<PortableMapBaseLighting>();
-            light.intensity=intensity*(environment?environment.ExposureFactor:1f/1.2f);
+            light.intensity=intensity*(environment?environment.PreviewLightFactor:1f/Mathf.PI);
         }
     }
 }

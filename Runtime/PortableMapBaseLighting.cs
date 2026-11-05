@@ -15,15 +15,34 @@ namespace Radbot.MapAuthoring
         [ColorUsage(false,false)] public Color sunColor=Color.white;
         public bool sunShadows=true;
         [SerializeField,HideInInspector] LightingProfile appliedProfile;
+        Material previewSky,previousSky;
+        AmbientMode previousAmbientMode;
+        SphericalHarmonicsL2 previousAmbientProbe;
+        float previousReflectionIntensity;
+        public float CameraExposure
+        {
+            get{var p=Settings();float ev=Mathf.Approximately(p.minEV100,p.maxEV100)?p.minEV100:p.referenceEV100;return Mathf.Pow(2,p.exposureBias-ev+(GraphicsSettings.currentRenderPipeline?0:p.previewExposureBias))/1.2f;}
+        }
+        // Unity's built-in Standard BRDF absorbs Lambert's 1/pi into light units.
+        // Exposure belongs to the HDR camera pass, including emissive materials and sky.
+        public float PreviewLightFactor=>GraphicsSettings.currentRenderPipeline?ExposureFactor:1f/Mathf.PI;
         public string Key=>profile==LightingProfile.CartoonStreetNight?"cartoon-street-night":"cartoon-street-day";
         [Serializable] public sealed class Sun {public float intensity;public float[] color,quaternion;}
-        [Serializable] public sealed class Profile {public string key;public Sun[] suns;public float skyIntensity,exposureBias,minEV100,maxEV100,referenceEV100;public float[] skyColor,skyZenith,skyHorizon,skyOverall,skyLuminanceGain;}
+        [Serializable] public sealed class Profile {public string key,previewSkyResource;public Sun[] suns;public float skyIntensity,exposureBias,minEV100,maxEV100,referenceEV100,previewExposureBias;public float[] skyColor,skyZenith,skyHorizon,skyOverall,skyLuminanceGain;}
         [Serializable] sealed class Collection {public Profile[] profiles;}
+        static Collection profiles;
+        Profile cachedProfile;
         public Profile Settings()
         {
-            var data=Resources.Load<TextAsset>("Tanuki/lighting-profiles");
-            if(!data)throw new InvalidOperationException("The plugin lighting-profile data is missing.");
-            return Array.Find(JsonUtility.FromJson<Collection>(data.text).profiles,p=>p.key==Key)??throw new InvalidOperationException("Unknown base lighting profile.");
+            if(cachedProfile!=null&&cachedProfile.key==Key)return cachedProfile;
+            if(profiles==null)
+            {
+                var data=Resources.Load<TextAsset>("Tanuki/lighting-profiles");
+                if(!data)throw new InvalidOperationException("The plugin lighting-profile data is missing.");
+                profiles=JsonUtility.FromJson<Collection>(data.text);
+            }
+            cachedProfile=Array.Find(profiles.profiles,p=>p.key==Key)??throw new InvalidOperationException("Unknown base lighting profile.");
+            return cachedProfile;
         }
         public float ExposureFactor
         {
@@ -34,12 +53,28 @@ namespace Radbot.MapAuthoring
             if(key!="cartoon-street-day"&&key!="cartoon-street-night")throw new InvalidOperationException("Unsupported base lighting profile.");
             profile=key=="cartoon-street-night"?LightingProfile.CartoonStreetNight:LightingProfile.CartoonStreetDay;overrideSun=false;Refresh();
         }
-        void OnEnable()=>Schedule();
+        void OnEnable()
+        {
+            previousSky=RenderSettings.skybox;previousAmbientMode=RenderSettings.ambientMode;
+            previousAmbientProbe=RenderSettings.ambientProbe;previousReflectionIntensity=RenderSettings.reflectionIntensity;
+            PortablePreviewTonemapping.Register(this);Schedule();
+        }
+        void OnDisable()
+        {
+            PortablePreviewTonemapping.Unregister(this);
+            if(previewSky&&RenderSettings.skybox==previewSky)
+            {
+                RenderSettings.skybox=previousSky;RenderSettings.ambientMode=previousAmbientMode;
+                RenderSettings.ambientProbe=previousAmbientProbe;RenderSettings.reflectionIntensity=previousReflectionIntensity;
+            }
+            if(previewSky){if(Application.isPlaying)Destroy(previewSky);else DestroyImmediate(previewSky);previewSky=null;}
+            var helper=transform.Find("_TanukiBaseLighting");if(helper)helper.gameObject.SetActive(false);
+        }
         void OnValidate(){if(appliedProfile!=profile)overrideSun=false;Schedule();}
         void Schedule()
         {
 #if UNITY_EDITOR
-            if(!Application.isPlaying){UnityEditor.EditorApplication.delayCall+=()=>{if(this&&!UnityEditor.EditorUtility.IsPersistent(this))Refresh();};return;}
+            if(!Application.isPlaying){UnityEditor.EditorApplication.delayCall+=()=>{if(this&&isActiveAndEnabled&&!UnityEditor.EditorUtility.IsPersistent(this))Refresh();};return;}
 #endif
             Refresh();
         }
@@ -49,6 +84,7 @@ namespace Radbot.MapAuthoring
             if(!overrideSun){var sun=p.suns[0];var q=sun.quaternion;sunRotation=new Quaternion(q[1],q[2],q[0],q[3]).eulerAngles;sunIntensity=sun.intensity;sunColor=new Color(sun.color[0],sun.color[1],sun.color[2]).gamma;sunShadows=true;}
             appliedProfile=profile;
             if(!helper){var go=new GameObject("_TanukiBaseLighting");go.transform.SetParent(transform,false);go.AddComponent<PortableMapPreviewReference>();helper=go.transform;}
+            helper.gameObject.SetActive(true);
             for(int i=0;i<Mathf.Max(helper.childCount,p.suns.Length);i++)
             {
                 Light light;
@@ -58,19 +94,21 @@ namespace Radbot.MapAuthoring
                 var sun=p.suns[i];light.type=LightType.Directional;light.shadows=LightShadows.Soft;
                 light.color=new Color(sun.color[0],sun.color[1],sun.color[2]).gamma;
                 var q=sun.quaternion;light.transform.localRotation=new Quaternion(q[1],q[2],q[0],q[3]);
-                light.intensity=sun.intensity*ExposureFactor;
-                if(overrideSun){light.transform.localRotation=Quaternion.Euler(sunRotation);light.color=sunColor;light.intensity=sunIntensity*ExposureFactor;light.shadows=sunShadows?LightShadows.Soft:LightShadows.None;}
+                light.intensity=sun.intensity*PreviewLightFactor;
+                if(overrideSun){light.transform.localRotation=Quaternion.Euler(sunRotation);light.color=sunColor;light.intensity=sunIntensity*PreviewLightFactor;light.shadows=sunShadows?LightShadows.Soft:LightShadows.None;}
             }
-            RenderSettings.ambientMode=AmbientMode.Flat;
-            var c=p.skyColor??new[]{1f,1f,1f};var zenith=p.skyZenith??c;var horizon=p.skyHorizon??c;var overall=p.skyOverall??c;var gain=p.skyLuminanceGain??new[]{1f,1f,1f};
-            Color Sky(float[] values)=>new Color(values[0]*c[0]*overall[0]*gain[0],values[1]*c[1]*overall[1]*gain[1],values[2]*c[2]*overall[2]*gain[2]);
-            RenderSettings.ambientLight=Color.Lerp(Sky(horizon),Sky(zenith),.5f)*p.skyIntensity*ExposureFactor;
+            var panorama=Resources.Load<Texture2D>("Tanuki/"+(string.IsNullOrEmpty(p.previewSkyResource)?Key:p.previewSkyResource));
+            RenderSettings.ambientMode=AmbientMode.Custom;
+            RenderSettings.ambientProbe=PortablePreviewSkyIrradiance.Get(panorama,p.skyColor,p.skyIntensity*(GraphicsSettings.currentRenderPipeline?CameraExposure:1));
+            RenderSettings.reflectionIntensity=p.skyIntensity;
             var shader=Shader.Find("Hidden/Tanuki/AuthoringSky");
             if(shader)
             {
-                var sky=RenderSettings.skybox;
-                if(!sky||sky.shader!=shader){sky=new Material(shader){name="Tanuki Base Sky",hideFlags=HideFlags.DontSave};RenderSettings.skybox=sky;}
-                sky.SetTexture("_Panorama",Resources.Load<Texture2D>("Tanuki/"+Key));sky.SetFloat("_Exposure",ExposureFactor*Mathf.PI);
+                if(!previewSky)previewSky=new Material(shader){name="Tanuki Base Sky",hideFlags=HideFlags.HideAndDontSave};
+                var sky=previewSky;RenderSettings.skybox=sky;
+                bool changed=sky.GetTexture("_Panorama")!=panorama;
+                sky.SetTexture("_Panorama",panorama);sky.SetFloat("_Exposure",GraphicsSettings.currentRenderPipeline?CameraExposure:1);
+                if(changed)DynamicGI.UpdateEnvironment();
             }
             foreach(var light in GetComponentsInChildren<PortableMapLight>(true))light.Refresh();
         }

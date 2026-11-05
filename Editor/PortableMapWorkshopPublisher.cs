@@ -11,7 +11,7 @@ using Radbot.MapAuthoring.Steamworks;
 
 namespace Radbot.MapAuthoring.Editor
 {
-    /// <summary>Editor-owned Steam UGC publishing. No game process or credentials are used.</summary>
+    /// <summary>Editor-owned Steam UGC publishing with offline geometry preparation.</summary>
     [InitializeOnLoad]
     public static class PortableMapWorkshopPublisher
     {
@@ -199,6 +199,8 @@ namespace Radbot.MapAuthoring.Editor
             var request=new Request { jobId=Guid.NewGuid().ToString("N"),file=Path.GetFullPath(Path.Combine(directory,"content/map.tanukimap")),
                 preview=Path.GetFullPath(Path.Combine(directory,"preview.png")),title=title,itemId=itemId??"" };
             prepared.WriteFile(request.file);
+            string package=UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(PortableMapWorkshopPublisher).Assembly).resolvedPath;
+            Tanuki.Authoring.PortableMapPreparation.Prepare(request.file,Path.Combine(package,"Editor/Native~/TanukiPreviewSetup.exe"),directory).GetAwaiter().GetResult();
             if(string.IsNullOrWhiteSpace(preview)) PortableMapThumbnail.Capture(map,request.preview); else File.Copy(preview,request.preview,false);
             File.WriteAllText(Path.Combine(directory,"request.json"),JsonUtility.ToJson(request,true),new UTF8Encoding(false));
             return request;
